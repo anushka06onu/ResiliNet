@@ -35,18 +35,18 @@ const RoutingDecisions = () => {
               </tr>
               <tr>
                 <td className="px-4 py-3 font-medium">Latency</td>
-                <td className="px-4 py-3">126 ms</td>
-                <td className="px-4 py-3 text-emerald-400 font-bold">71 ms</td>
+                <td className="px-4 py-3">Pending</td>
+                <td className="px-4 py-3 text-emerald-400 font-bold">Pending</td>
               </tr>
               <tr>
                 <td className="px-4 py-3 font-medium">Packet Loss</td>
-                <td className="px-4 py-3">4.2%</td>
-                <td className="px-4 py-3 text-emerald-400 font-bold">0.8%</td>
+                <td className="px-4 py-3">Pending</td>
+                <td className="px-4 py-3 text-emerald-400 font-bold">Pending</td>
               </tr>
               <tr>
                 <td className="px-4 py-3 font-medium">Throughput</td>
-                <td className="px-4 py-3">1.9 Mbps</td>
-                <td className="px-4 py-3 text-emerald-400 font-bold">3.7 Mbps</td>
+                <td className="px-4 py-3">Pending</td>
+                <td className="px-4 py-3 text-emerald-400 font-bold">Pending</td>
               </tr>
               <tr>
                 <td className="px-4 py-3 font-medium">Path</td>

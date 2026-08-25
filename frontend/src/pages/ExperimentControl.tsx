@@ -109,8 +109,11 @@ const ExperimentControl = () => {
              <button onClick={handleReplay} className="w-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500/30 py-2 rounded flex justify-center items-center gap-2 transition-colors mb-3">
                <RefreshCw size={16} /> Load Replay Dataset
              </button>
+             <p className="text-sm text-slate-400 mb-3 mt-4">
+               <strong>Guided Reviewer Demo:</strong> Runs a 2-minute automated sequence demonstrating the complete pipeline: Normal operation &rarr; Controlled load increase &rarr; Elevated future-risk score &rarr; Explanation &rarr; Alternative route &rarr; OpenFlow installation &rarr; Route verification &rarr; QoS outcome comparison.
+             </p>
              <button onClick={handleReplay} className="w-full bg-purple-500/20 text-purple-400 border border-purple-500/50 hover:bg-purple-500/30 py-2 rounded flex justify-center items-center gap-2 transition-colors">
-               <Play size={16} /> Guided Reviewer Demo
+               <Play size={16} /> Start Guided Reviewer Demo
              </button>
           </div>
         </div>

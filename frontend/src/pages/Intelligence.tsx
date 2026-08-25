@@ -64,7 +64,7 @@ const Intelligence = () => {
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col">
           <h3 className="text-slate-300 font-medium mb-1">SHAP Feature Explanations</h3>
           <div className="flex-1 overflow-y-auto space-y-3">
-            <p className="text-xs text-slate-400 mb-2">Estimates how each feature contributes to the model output in its own units.</p>
+            <p className="text-xs text-slate-400 mb-2">TreeSHAP estimates each feature’s contribution to an individual LightGBM output relative to the model’s expected output. The dashboard presents the observed feature value, contribution direction and a plain-language interpretation. The displayed explanation is treated as a model explanation, not as proof of a causal relationship.</p>
             
             <div className="bg-slate-800/50 p-3 rounded">
               <div className="mb-2">
