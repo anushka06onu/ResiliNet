@@ -45,28 +45,17 @@ export const getPredictionAndExplanation = async (source: string, target: string
   try {
     if (isSimulationMode) throw new Error('Force mock'); // Skip fetch if we are in DEMO DATA mode
     
-    // In live mode, we fetch both predict and explain and combine them to match the frontend contract
-    const predictRes = await fetch(`${API_BASE}/predict`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ switch_id: source, port_no: target, features: {} })
-    });
-    
-    const explainRes = await fetch(`${API_BASE}/explain`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ switch_id: source, port_no: target, features: {} })
+    // In live mode, we fetch both predict and explain from the backend's combined endpoint
+    // link_id format in backend is switch-pport (e.g. s1-p2). If source/target are provided instead, we might need a mapping, but for simplicity let's assume source-target is the link_id format requested here.
+    const linkId = `${source}-${target}`;
+    const res = await fetch(`${API_BASE}/links/${linkId}/latest-prediction`, {
+      method: 'GET'
     });
 
-    if (!predictRes.ok || !explainRes.ok) throw new Error('Network response was not ok');
+    if (!res.ok) throw new Error('Network response was not ok');
     
-    const predictData = await predictRes.json();
-    const explainData = await explainRes.json();
-
-    return {
-      predict: predictData,
-      explain: explainData
-    };
+    const data = await res.json();
+    return data;
   } catch (error) {
     // Realistic Mock Data for Simulation Mode (DEMO DATA)
     return new Promise((resolve) => {

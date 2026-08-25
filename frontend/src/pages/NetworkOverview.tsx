@@ -3,11 +3,15 @@ import { Activity, ShieldCheck, AlertTriangle, Route } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 const NetworkOverview = () => {
-  const { activeConnections } = useStore();
+  const { activeConnections, currentTopology, linkStates } = useStore();
+  
+  // Calculate dynamic stats
+  const totalLinks = currentTopology?.links?.length || 0;
+  const atRiskLinks = Object.values(linkStates).filter(s => (s.predicted_risk || 0) > 0.8).length;
+  // We consider all non-at-risk links healthy for now in demo
+  const healthyLinks = totalLinks - atRiskLinks;
+
   const [stats] = useState({
-    activeNodes: 12,
-    healthyLinks: 18,
-    atRiskLinks: 2,
     activeCriticalFlows: 4,
     slaViolations: 0,
     predictiveReroutes: 3,
@@ -19,8 +23,8 @@ const NetworkOverview = () => {
       <header className="mb-8">
         <h2 className="text-2xl font-bold text-white mb-2">Network Overview</h2>
         <div className="flex gap-4 text-sm items-center">
-          <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Topology: <strong className="text-white">sndlib_campus</strong></span>
-          <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Experiment: <strong className="text-white">exp_001_live</strong></span>
+          <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Topology: <strong className="text-white">sndlib_campus_demo</strong></span>
+          <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Experiment: <strong className="text-white">demo_scenario_001</strong></span>
           <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Connections: <strong className="text-emerald-400">{activeConnections}</strong></span>
           <div className="bg-amber-900/30 text-amber-400 border border-amber-500/50 px-3 py-1 rounded-md text-xs font-bold tracking-wider uppercase ml-auto">
             ILLUSTRATIVE DEMO SCENARIO
@@ -34,7 +38,7 @@ const NetworkOverview = () => {
           <div>
             <p className="text-slate-400 text-sm font-medium">Network Health</p>
             <div className="text-2xl font-bold text-white mt-1">
-              <span className="text-emerald-400">{stats.healthyLinks}</span> / {stats.healthyLinks + stats.atRiskLinks}
+              <span className="text-emerald-400">{healthyLinks}</span> / {totalLinks}
             </div>
             <p className="text-xs text-slate-500 mt-1">Healthy Links</p>
           </div>
@@ -53,8 +57,8 @@ const NetworkOverview = () => {
         <div className="bg-slate-900 border border-amber-900/50 p-4 rounded-lg flex items-center justify-between">
           <div>
             <p className="text-amber-500 text-sm font-medium">At-Risk Links</p>
-            <div className="text-2xl font-bold text-white mt-1">{stats.atRiskLinks}</div>
-            <p className="text-xs text-amber-500/70 mt-1">Predicted congestion</p>
+            <div className="text-2xl font-bold text-white mt-1">{atRiskLinks}</div>
+            <p className="text-xs text-amber-500/70 mt-1">Predicted risk {'>'} 80%</p>
           </div>
           <AlertTriangle className="text-amber-500/50" size={32} />
         </div>

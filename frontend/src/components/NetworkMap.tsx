@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import cytoscape from 'cytoscape';
 import { getTopology } from '../services/api';
+import { useStore } from '../store/useStore';
 
 interface NetworkMapProps {
   onSelectElement: (element: any) => void;
@@ -10,6 +11,7 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [loading, setLoading] = useState(true);
+  const { linkStates } = useStore();
 
   useEffect(() => {
     const initGraph = async () => {
@@ -149,6 +151,37 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
       }
     };
   }, [onSelectElement]);
+
+  useEffect(() => {
+    if (!cyRef.current) return;
+    
+    cyRef.current.edges().forEach((edge) => {
+      const src = edge.data('source');
+      const tgt = edge.data('target');
+      // Look up both directions since we might not know which way the link was keyed
+      const state = linkStates[`${src}-p${tgt}`] || linkStates[`${tgt}-p${src}`] || 
+                    linkStates[`${src}-${tgt}`] || linkStates[`${tgt}-${src}`];
+      
+      if (state && state.predicted_risk !== undefined) {
+        let color = '#334155'; // default slate-700
+        let width = 2.5;
+        if (state.predicted_risk > 0.8) {
+          color = '#ef4444'; // red-500
+          width = 4;
+        } else if (state.predicted_risk > 0.5) {
+          color = '#f59e0b'; // amber-500
+          width = 3.5;
+        } else {
+          color = '#10b981'; // emerald-500
+          width = 3;
+        }
+        // Only update if not selected (to preserve selection color)
+        if (!edge.selected()) {
+          edge.style({ 'line-color': color, 'width': width });
+        }
+      }
+    });
+  }, [linkStates]);
 
   return (
     <div className="w-full h-full relative">

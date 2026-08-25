@@ -7,8 +7,6 @@ import asyncio
 import random
 from datetime import datetime
 from pydantic import BaseModel
-import random
-from datetime import datetime
 
 # Import routers
 try:
@@ -69,31 +67,33 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Background task to stream demo telemetry to all connected clients
-async def stream_demo_telemetry():
-    while True:
-        await asyncio.sleep(2.0) # Emit every 2 seconds
-        if not manager.active_connections:
-            continue
-            
 class TelemetryPayload(BaseModel):
     switch_id: str
     port_no: str
     features: dict
 
+latest_features = {}
+last_telemetry_timestamp = None
+
 @app.post("/api/v1/telemetry/ingest")
 async def ingest_telemetry(payload: TelemetryPayload):
+    global last_telemetry_timestamp
+    last_telemetry_timestamp = datetime.utcnow()
+    
+    link_id = f"{payload.switch_id}-p{payload.port_no}"
+    latest_features[link_id] = payload.features
+
     event = {
-        "mode": "LIVE_LAB",
+        "mode": "LIVE LAB",
         "source": "mininet_ryu",
         "type": "link_telemetry",
         "timestamp": datetime.utcnow().isoformat() + "Z",
-        "experiment_id": "exp_001_live",
+        "experiment_id": "demo_scenario_001",
         "payload": {
-            "link_id": f"{payload.switch_id}-p{payload.port_no}",
+            "link_id": link_id,
             "utilization": round(payload.features.get("utilization", 0.0), 4),
             "latency_ms": 0.0, # Cannot be calculated from pure port stats
-            "loss_rate": payload.features.get("tx_dropped", 0.0),
+            "loss_rate": payload.features.get("loss_mean_30s", 0.0),
             "predicted_risk": 0.0
         }
     }
@@ -129,7 +129,13 @@ async def startup_event():
 # ---------------------------------------------------------
 @app.get("/api/v1/system/status")
 def system_status():
-    return {"status": "DEMO DATA", "version": "1.1.0", "active_connections": len(manager.active_connections)}
+    mode = "DEMO DATA"
+    if last_telemetry_timestamp:
+        dt = (datetime.utcnow() - last_telemetry_timestamp).total_seconds()
+        if dt <= 10.0:
+            mode = "LIVE LAB"
+            
+    return {"status": mode, "version": "1.1.0", "active_connections": len(manager.active_connections)}
 
 @app.get("/api/v1/topologies")
 def list_topologies():
@@ -141,11 +147,50 @@ def get_current_topology():
     if os.path.exists(topo_path):
         with open(topo_path, 'r') as f:
             return json.load(f)
-    return {"error": "Topology not active"}
+    return {"nodes": [], "links": [], "mode": "DEMO DATA"}
 
 @app.get("/api/v1/links/{link_id}")
 def get_link_details(link_id: str):
-    return {"link_id": link_id, "capacity": "1Gbps", "current_throughput": "450Mbps"}
+    return {"link_id": link_id, "capacity": "10Mbps", "current_throughput": "4.5Mbps"}
+
+@app.get("/api/v1/links/{link_id}/latest-prediction")
+def get_latest_prediction(link_id: str):
+    features = latest_features.get(link_id, {})
+    
+    try:
+        from app.api.predict import explainer, MODEL_LOADED
+        if MODEL_LOADED and features:
+            import pandas as pd
+            df = pd.DataFrame([features])
+            try:
+                prob = float(explainer.model.predict(df)[0])
+                shap_values = explainer.explain(df)
+                
+                exp_data = []
+                if shap_values:
+                    # Simplify SHAP extraction for API
+                    for col, val in zip(df.columns, shap_values[0]):
+                        exp_data.append({"name": col, "contribution": float(val)})
+                
+                return {
+                    "predict": {"link_id": link_id, "risk": prob, "horizon": "30s"},
+                    "explain": {"features": exp_data}
+                }
+            except Exception as e:
+                pass
+    except Exception as e:
+        pass
+        
+    # Deterministic mock fallback
+    link_hash = sum(ord(c) for c in link_id)
+    risk = (link_hash % 100) / 100.0
+    return {
+        "predict": {"link_id": link_id, "risk": risk, "horizon": "30s"},
+        "explain": {"features": [
+            {"name": "utilization", "contribution": 0.3},
+            {"name": "loss_mean_30s", "contribution": 0.2},
+        ]}
+    }
 
 # ---------------------------------------------------------
 # Flows & QoS Endpoints

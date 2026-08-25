@@ -12,7 +12,7 @@ import Methodology from './pages/Methodology';
 import SystemHealth from './pages/SystemHealth';
 
 function App() {
-  const { setSystemStatus, setWsConnected } = useStore();
+  const { setSystemStatus, setWsConnected, updateTelemetry } = useStore();
 
   useEffect(() => {
     const WS_BASE = import.meta.env.VITE_WS_BASE_URL ?? 'ws://localhost:8000/api/v1/stream';
@@ -33,8 +33,7 @@ function App() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log("Telemetry Received:", data);
-        // Handle telemetry (to be implemented in specific pages)
+        updateTelemetry(data);
       } catch (e) {}
     };
 
@@ -44,7 +43,7 @@ function App() {
     };
 
     return () => ws.close();
-  }, [setSystemStatus, setWsConnected]);
+  }, [setSystemStatus, setWsConnected, updateTelemetry]);
 
   return (
     <Router>

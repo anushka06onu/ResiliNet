@@ -10,9 +10,10 @@ from ryu.lib import hub
 import requests
 import time
 import json
+import os
 from datetime import datetime
 
-API_ENDPOINT = "http://host.docker.internal:8000/api/v1/telemetry/ingest"
+API_ENDPOINT = os.environ.get("RESILINET_API_URL", "http://host.docker.internal:8000/api/v1/telemetry/ingest")
 
 class ResiliNetRyuController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -24,7 +25,7 @@ class ResiliNetRyuController(app_manager.RyuApp):
         self.monitor_thread = hub.spawn(self._monitor)
         
         # State tracking for diff calculations
-        self.port_stats = {} # {dpid: {port_no: {rx_bytes: X, tx_bytes: Y, rx_dropped: Z, tx_dropped: W, timestamp: T}}}
+        self.port_stats = {} # {dpid: {port_no: {rx_bytes: X, tx_bytes: Y, rx_dropped: Z, tx_dropped: W, tx_packets: P, timestamp: T}}}
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -129,6 +130,7 @@ class ResiliNetRyuController(app_manager.RyuApp):
                 'tx_bytes': stat.tx_bytes,
                 'rx_dropped': stat.rx_dropped,
                 'tx_dropped': stat.tx_dropped,
+                'tx_packets': stat.tx_packets,
                 'timestamp': current_time
             }
 
@@ -138,23 +140,30 @@ class ResiliNetRyuController(app_manager.RyuApp):
                     rx_rate = (stat.rx_bytes - prev['rx_bytes']) / dt
                     tx_rate = (stat.tx_bytes - prev['tx_bytes']) / dt
                     
+                    d_tx_dropped = stat.tx_dropped - prev['tx_dropped']
+                    d_tx_packets = stat.tx_packets - prev['tx_packets']
+                    
+                    loss_rate = d_tx_dropped / (d_tx_packets + d_tx_dropped) if (d_tx_packets + d_tx_dropped) > 0 else 0.0
+
                     # Convert to bps
                     rx_bps = rx_rate * 8
                     tx_bps = tx_rate * 8
                     
                     # Estimate utilization based on 10Mbps link (small_test.py)
-                    capacity_bps = 10 * 1024 * 1024 
-                    utilization = max((rx_bps + tx_bps) / 2 / capacity_bps, 0.0)
+                    capacity_bps = 10_000_000 
+                    utilization = max(rx_bps, tx_bps) / capacity_bps
                     
-                    # Send telemetry to API
+                    # Send telemetry to API with consistent ML features
                     telemetry = {
                         "switch_id": f"s{dpid}",
                         "port_no": str(port_no),
                         "features": {
                             "utilization": min(utilization, 1.0),
-                            "rx_bytes_rate": rx_rate,
-                            "tx_bytes_rate": tx_rate,
-                            "tx_dropped": stat.tx_dropped - prev['tx_dropped']
+                            "loss_mean_30s": loss_rate,
+                            "tx_dropped_max": d_tx_dropped,
+                            "latency_mean_30s": 0.0,
+                            "rx_bytes_slope": rx_rate,
+                            "tx_bytes_rate": tx_rate
                         }
                     }
                     
@@ -163,7 +172,8 @@ class ResiliNetRyuController(app_manager.RyuApp):
 
     def _send_telemetry(self, telemetry):
         try:
-            requests.post(API_ENDPOINT, json=telemetry, timeout=1)
+            response = requests.post(API_ENDPOINT, json=telemetry, timeout=1)
+            if response.status_code >= 400:
+                print(f"API Error {response.status_code}: {response.text}")
         except Exception as e:
-            # print(f"API Error: {e}")
-            pass
+            print(f"API Connection Error: {e}")

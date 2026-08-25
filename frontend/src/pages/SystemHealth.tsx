@@ -3,14 +3,17 @@ import { Activity, Server, Cpu, Database, Network, Clock, CheckCircle, XCircle }
 import { useStore } from '../store/useStore';
 
 const SystemHealth = () => {
-  const { systemStatus, wsConnected } = useStore();
+  const { systemStatus, wsConnected, dataMode, latestTelemetry } = useStore();
+  
+  const isLive = dataMode === 'LIVE LAB';
+  const lastTime = latestTelemetry?.timestamp ? new Date(latestTelemetry.timestamp).toLocaleTimeString() : 'Unknown';
 
   const metrics = [
-    { label: 'Collector Status', value: 'Not connected', icon: <Database size={16} />, status: 'error' },
+    { label: 'Collector Status', value: isLive ? 'Connected' : 'Not connected', icon: <Database size={16} />, status: isLive ? 'good' : 'error' },
     { label: 'Model Version', value: 'Development artifact', icon: <Cpu size={16} />, status: 'info' },
     { label: 'WebSocket Connection', value: wsConnected ? 'Connected' : 'Disconnected', icon: <Network size={16} />, status: wsConnected ? 'good' : 'error' },
-    { label: 'Controller Status', value: 'Not connected', icon: <Server size={16} />, status: 'error' },
-    { label: 'Experiment Source', value: 'Synthetic', icon: <Clock size={16} />, status: 'info' },
+    { label: 'Last Telemetry', value: lastTime, icon: <Clock size={16} />, status: isLive ? 'good' : 'info' },
+    { label: 'Current Data Mode', value: dataMode, icon: <Activity size={16} />, status: isLive ? 'good' : 'info' },
   ];
 
   const recentLogs: { time: string; level: string; message: string }[] = [];
