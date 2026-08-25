@@ -17,14 +17,14 @@ const MOCK_TOPOLOGY = {
     { id: 'server1', type: 'host' }
   ],
   links: [
-    { source: 'core1', target: 'core2' },
-    { source: 'core1', target: 'dist1' },
-    { source: 'core2', target: 'dist2' },
-    { source: 'dist1', target: 'acc1' },
-    { source: 'dist2', target: 'acc2' },
-    { source: 'acc1', target: 'h1' },
-    { source: 'acc2', target: 'h2' },
-    { source: 'core1', target: 'server1' }
+    { source: 'core1', source_port: '1', target: 'core2', target_port: '1' },
+    { source: 'core1', source_port: '2', target: 'dist1', target_port: '1' },
+    { source: 'core2', source_port: '2', target: 'dist2', target_port: '1' },
+    { source: 'dist1', source_port: '2', target: 'acc1', target_port: '1' },
+    { source: 'dist2', source_port: '2', target: 'acc2', target_port: '1' },
+    { source: 'acc1', source_port: '2', target: 'h1', target_port: '1' },
+    { source: 'acc2', source_port: '2', target: 'h2', target_port: '1' },
+    { source: 'core1', source_port: '3', target: 'server1', target_port: '1' }
   ]
 };
 

@@ -75,6 +75,10 @@ class TelemetryPayload(BaseModel):
 latest_features = {}
 last_telemetry_timestamp = None
 
+# A rolling buffer for historical telemetry values to compute rolling stats
+# Format: { link_id: [(timestamp, rx_bytes, tx_dropped, tx_packets)] }
+link_history = {}
+
 @app.post("/api/v1/telemetry/ingest")
 async def ingest_telemetry(payload: TelemetryPayload):
     global last_telemetry_timestamp
@@ -92,7 +96,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
         "payload": {
             "link_id": link_id,
             "utilization": round(payload.features.get("utilization", 0.0), 4),
-            "latency_ms": 0.0, # Cannot be calculated from pure port stats
+            "latency_ms": None,
             "loss_rate": payload.features.get("loss_mean_30s", 0.0),
             "predicted_risk": 0.0
         }
@@ -164,20 +168,25 @@ def get_latest_prediction(link_id: str):
             df = pd.DataFrame([features])
             try:
                 prob = float(explainer.model.predict(df)[0])
-                shap_values = explainer.explain(df)
-                
-                exp_data = []
-                if shap_values:
-                    # Simplify SHAP extraction for API
-                    for col, val in zip(df.columns, shap_values[0]):
-                        exp_data.append({"name": col, "contribution": float(val)})
+                explanation = explainer.get_local_explanation(df)
                 
                 return {
-                    "predict": {"link_id": link_id, "risk": prob, "horizon": "30s"},
-                    "explain": {"features": exp_data}
+                    "mode": "LIVE LAB",
+                    "predict": {
+                        "link_id": link_id,
+                        "congestion_probability": prob,
+                        "is_violation_predicted": prob > 0.5,
+                        "horizon": "30s"
+                    },
+                    "explain": explanation
                 }
             except Exception as e:
-                pass
+                return {
+                    "mode": "LIVE LAB",
+                    "prediction_status": "unavailable",
+                    "error": "feature_schema_mismatch",
+                    "detail": str(e)
+                }
     except Exception as e:
         pass
         
@@ -185,7 +194,13 @@ def get_latest_prediction(link_id: str):
     link_hash = sum(ord(c) for c in link_id)
     risk = (link_hash % 100) / 100.0
     return {
-        "predict": {"link_id": link_id, "risk": risk, "horizon": "30s"},
+        "mode": "DEMO DATA",
+        "predict": {
+            "link_id": link_id,
+            "congestion_probability": risk,
+            "is_violation_predicted": risk > 0.5,
+            "horizon": "30s"
+        },
         "explain": {"features": [
             {"name": "utilization", "contribution": 0.3},
             {"name": "loss_mean_30s", "contribution": 0.2},

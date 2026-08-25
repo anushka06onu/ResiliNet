@@ -12,7 +12,7 @@ import Methodology from './pages/Methodology';
 import SystemHealth from './pages/SystemHealth';
 
 function App() {
-  const { setSystemStatus, setWsConnected, updateTelemetry } = useStore();
+  const { setSystemStatus, setWsConnected, updateTelemetry, checkDataModeExpiry } = useStore();
 
   useEffect(() => {
     const WS_BASE = import.meta.env.VITE_WS_BASE_URL ?? 'ws://localhost:8000/api/v1/stream';
@@ -42,8 +42,15 @@ function App() {
       setSystemStatus('DISCONNECTED', 'Unknown', 0);
     };
 
-    return () => ws.close();
-  }, [setSystemStatus, setWsConnected, updateTelemetry]);
+    const intervalId = setInterval(() => {
+      checkDataModeExpiry();
+    }, 2000);
+
+    return () => {
+      ws.close();
+      clearInterval(intervalId);
+    };
+  }, [setSystemStatus, setWsConnected, updateTelemetry, checkDataModeExpiry]);
 
   return (
     <Router>

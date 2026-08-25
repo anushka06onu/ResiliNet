@@ -158,8 +158,12 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
     cyRef.current.edges().forEach((edge) => {
       const src = edge.data('source');
       const tgt = edge.data('target');
-      // Look up both directions since we might not know which way the link was keyed
-      const state = linkStates[`${src}-p${tgt}`] || linkStates[`${tgt}-p${src}`] || 
+      const srcPort = edge.data('source_port');
+      const tgtPort = edge.data('target_port');
+
+      // Look up both directions using the new port mappings
+      // e.g. "core1-p1"
+      const state = linkStates[`${src}-p${srcPort}`] || linkStates[`${tgt}-p${tgtPort}`] || 
                     linkStates[`${src}-${tgt}`] || linkStates[`${tgt}-${src}`];
       
       if (state && state.predicted_risk !== undefined) {

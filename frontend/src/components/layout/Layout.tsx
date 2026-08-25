@@ -4,7 +4,7 @@ import { Activity, Route, PlayCircle, FileText, Share2, Network, ShieldAlert, Se
 import { useStore } from '../../store/useStore';
 
 const Layout = () => {
-  const { systemStatus, version } = useStore();
+  const { dataMode, version } = useStore();
 
   const navItems = [
     { name: 'Network Overview', path: '/', icon: <Activity size={18} /> },
@@ -52,14 +52,14 @@ const Layout = () => {
 
         <div className="p-4 border-t border-slate-800">
           <div className={`text-xs px-3 py-1.5 rounded-md border text-center font-bold tracking-wider uppercase
-            ${systemStatus === 'LIVE LAB' ? 'bg-emerald-900/30 text-emerald-400 border-emerald-500/50' : 
-              systemStatus === 'EXPERIMENT REPLAY' ? 'bg-indigo-900/30 text-indigo-400 border-indigo-500/50' :
-              systemStatus === 'DEMO DATA' ? 'bg-amber-900/30 text-amber-400 border-amber-500/50' :
-              systemStatus === 'DISCONNECTED' ? 'bg-red-900/30 text-red-400 border-red-500/50' :
+            ${dataMode === 'LIVE LAB' ? 'bg-emerald-900/30 text-emerald-400 border-emerald-500/50' : 
+              dataMode === 'EXPERIMENT REPLAY' ? 'bg-indigo-900/30 text-indigo-400 border-indigo-500/50' :
+              dataMode === 'DEMO DATA' ? 'bg-amber-900/30 text-amber-400 border-amber-500/50' :
+              dataMode === 'DISCONNECTED' ? 'bg-red-900/30 text-red-400 border-red-500/50' :
               'bg-slate-800 text-slate-300 border-slate-700'
             }`}
           >
-            {systemStatus}
+            {dataMode}
           </div>
         </div>
       </aside>
@@ -67,13 +67,13 @@ const Layout = () => {
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden flex flex-col relative">
         <div className={`w-full py-1.5 text-center text-xs font-bold tracking-widest uppercase text-white shadow-md
-          ${systemStatus === 'LIVE LAB' ? 'bg-emerald-600' : 
-            systemStatus === 'EXPERIMENT REPLAY' ? 'bg-indigo-600' :
-            systemStatus === 'DEMO DATA' ? 'bg-amber-600' :
-            systemStatus === 'DISCONNECTED' ? 'bg-red-600' : 'bg-slate-700'
+          ${dataMode === 'LIVE LAB' ? 'bg-emerald-600' : 
+            dataMode === 'EXPERIMENT REPLAY' ? 'bg-indigo-600' :
+            dataMode === 'DEMO DATA' ? 'bg-amber-600' :
+            dataMode === 'DISCONNECTED' ? 'bg-red-600' : 'bg-slate-700'
           }`}
         >
-          DATA MODE: {systemStatus}
+          DATA MODE: {dataMode}
         </div>
         <Outlet />
       </main>

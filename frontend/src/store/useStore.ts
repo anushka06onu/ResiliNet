@@ -14,6 +14,7 @@ interface SystemState {
   setTopology: (topo: any) => void;
   setWsConnected: (connected: boolean) => void;
   updateTelemetry: (event: any) => void;
+  checkDataModeExpiry: () => void;
 }
 
 export const useStore = create<SystemState>((set) => ({
@@ -53,5 +54,15 @@ export const useStore = create<SystemState>((set) => ({
         linkStates: newLinkStates,
         dataMode: event.mode || state.dataMode
     };
+  }),
+  checkDataModeExpiry: () => set((state) => {
+    if (state.dataMode === 'LIVE LAB' && state.latestTelemetry) {
+      const timestamp = new Date(state.latestTelemetry.timestamp).getTime();
+      const age = Date.now() - timestamp;
+      if (age > 15000) {
+        return { dataMode: 'DEMO DATA' };
+      }
+    }
+    return state;
   }),
 }));

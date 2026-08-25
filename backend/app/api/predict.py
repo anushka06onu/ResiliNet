@@ -11,7 +11,11 @@ try:
     from ml.explain import ResiliNetExplainer
     import numpy as np
     import pandas as pd
-    explainer = ResiliNetExplainer(model_path='../../ml/artifacts/lightgbm_model.txt')
+    from pathlib import Path
+    
+    ROOT = Path(__file__).resolve().parents[3]
+    MODEL_PATH = ROOT / "ml" / "artifacts" / "lightgbm_model.txt"
+    explainer = ResiliNetExplainer(model_path=str(MODEL_PATH))
     MODEL_LOADED = True
 except Exception as e:
     print(f"Warning: Failed to load ML Explainer: {e}")
@@ -58,8 +62,8 @@ async def explain_prediction(data: FeatureVector):
         return {
             "switch_id": data.switch_id,
             "port_no": data.port_no,
-            "base_value": explanation['base_value'],
-            "features": explanation['features']
+            "base_value": explanation.get('base_value', 0.0),
+            "features": explanation.get('features', [])
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

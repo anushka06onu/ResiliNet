@@ -6,7 +6,6 @@ import pandas as pd
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-from train_lightgbm import load_data
 
 class ResiliNetExplainer:
     def __init__(self, model_path='ml/artifacts/lightgbm_model.txt'):
@@ -66,6 +65,7 @@ class ResiliNetExplainer:
         return explanation
 
 if __name__ == '__main__':
+    from train_lightgbm import load_data
     print("Testing SHAP Explainer...")
     try:
         explainer = ResiliNetExplainer()
