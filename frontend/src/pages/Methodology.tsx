@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { FileText, Download, Code } from 'lucide-react';
 
 const Methodology = () => {

@@ -1,9 +1,9 @@
-import React from 'react';
+
 import { Activity, Server, Cpu, Database, Network, Clock, CheckCircle, XCircle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 const SystemHealth = () => {
-  const { systemStatus, activeConnections } = useStore();
+  const { systemStatus } = useStore();
 
   const metrics = [
     { label: 'Collector Status', value: 'Active', icon: <Database size={16} />, status: 'good' },

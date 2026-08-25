@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { BrainCircuit, Info } from 'lucide-react';
 
 const Intelligence = () => {

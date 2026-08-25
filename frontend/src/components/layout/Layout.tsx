@@ -1,6 +1,6 @@
-import React from 'react';
+
 import { NavLink, Outlet } from 'react-router-dom';
-import { Activity, Route, Settings, PlayCircle, FileText, Share2, Network, ShieldAlert, Server } from 'lucide-react';
+import { Activity, Route, PlayCircle, FileText, Share2, Network, ShieldAlert, Server } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 
 const Layout = () => {

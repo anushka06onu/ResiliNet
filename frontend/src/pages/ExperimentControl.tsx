@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Play, Square, Pause, Settings, RefreshCw, FastForward } from 'lucide-react';
 
 const ExperimentControl = () => {

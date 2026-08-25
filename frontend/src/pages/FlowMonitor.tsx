@@ -1,4 +1,3 @@
-import React, { useState } from 'react';
 import { Search, Filter } from 'lucide-react';
 
 const mockFlows = [
@@ -8,8 +7,6 @@ const mockFlows = [
 ];
 
 const FlowMonitor = () => {
-  const [filter, setFilter] = useState('All');
-
   return (
     <div className="p-6 h-full flex flex-col">
       <header className="mb-6 flex justify-between items-end">

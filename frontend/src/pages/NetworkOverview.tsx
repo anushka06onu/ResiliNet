@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Activity, ShieldCheck, AlertTriangle, Route } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 const NetworkOverview = () => {
-  const { systemStatus, version, activeConnections } = useStore();
-  const [stats, setStats] = useState({
+  const { activeConnections } = useStore();
+  const [stats] = useState({
     activeNodes: 12,
     healthyLinks: 18,
     atRiskLinks: 2,

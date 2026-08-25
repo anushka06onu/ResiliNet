@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import { useStore } from './store/useStore';
@@ -10,14 +10,6 @@ import RoutingDecisions from './pages/RoutingDecisions';
 import ExperimentControl from './pages/ExperimentControl';
 import Methodology from './pages/Methodology';
 import SystemHealth from './pages/SystemHealth';
-
-// Temporary Mock Pages
-const PlaceholderPage = ({ title }: { title: string }) => (
-  <div className="p-8">
-    <h2 className="text-2xl font-bold text-slate-100">{title}</h2>
-    <p className="text-slate-400 mt-2">This module is under construction.</p>
-  </div>
-);
 
 function App() {
   const { setSystemStatus } = useStore();
