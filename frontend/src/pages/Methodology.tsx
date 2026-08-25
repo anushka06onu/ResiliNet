@@ -2,22 +2,7 @@
 import { FileText, Download, Code } from 'lucide-react';
 
 const Methodology = () => {
-  const handleDownload = () => {
-    // Generate a mock download since the actual report is not available via HTTP locally yet.
-    const mockReport = {
-      model: "LightGBM",
-      accuracy: 0.924,
-      roc_auc: 0.960,
-      timestamp: new Date().toISOString()
-    };
-    const blob = new Blob([JSON.stringify(mockReport, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'evaluation_report.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+
 
   return (
     <div className="p-6 h-full overflow-y-auto">
@@ -30,12 +15,9 @@ const Methodology = () => {
           <p className="text-slate-400 text-sm">Reproducibility and Data Provenance</p>
         </div>
         <div className="flex gap-4">
-          <button onClick={() => alert('Redirecting to GitHub Repository...')} className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition-colors text-sm">
+          <a href="https://github.com/anushka06onu/ResiliNet" target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition-colors text-sm">
             <Code size={16} /> View on GitHub
-          </button>
-          <button onClick={handleDownload} className="flex items-center gap-2 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded border border-emerald-500/50 transition-colors text-sm font-medium">
-            <Download size={16} /> Download Test Results
-          </button>
+          </a>
         </div>
       </header>
 
@@ -44,7 +26,7 @@ const Methodology = () => {
           <h3 className="text-xl font-bold text-white mb-4 border-b border-slate-800 pb-2">Dataset Provenance (Where the data comes from)</h3>
           <ul className="space-y-3 text-sm text-slate-300 list-disc list-inside">
             <li><strong>Topology Sourcing:</strong> Network maps derived from the <em>SNDlib (Survivable Network Design Library)</em> to simulate realistic telecommunication backbones.</li>
-            <li><strong>Number of Experiments:</strong> 100 complete scenario runs, simulating normal operations, heavy traffic jams (contention), and cable cuts (link failures).</li>
+            <li><strong>Number of Experiments:</strong> This demonstration currently uses a synthetic telemetry dataset containing 100 generated experiment identifiers. Mininet-based experimental validation is in progress.</li>
             <li><strong>Data Splitting (Preventing AI "Cheating"):</strong> The dataset is split strictly by complete experiments (60% Train, 20% Val, 20% Test) so the AI can never peek at future events.</li>
           </ul>
         </section>

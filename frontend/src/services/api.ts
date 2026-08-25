@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:8000/api/v1';
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
 
 // Global state to track if we are in live mode or simulation mode
 export let isSimulationMode = false;
@@ -30,7 +30,7 @@ const MOCK_TOPOLOGY = {
 
 export const getTopology = async () => {
   try {
-    const res = await fetch(`${API_BASE}/topology`);
+    const res = await fetch(`${API_BASE}/topology/current`);
     if (!res.ok) throw new Error('Network response was not ok');
     isSimulationMode = false;
     return await res.json();
@@ -44,7 +44,11 @@ export const getTopology = async () => {
 export const getPredictionAndExplanation = async (source: string, target: string) => {
   try {
     if (isSimulationMode) throw new Error('Force mock'); // Skip fetch if we already know backend is down
-    const res = await fetch(`${API_BASE}/predict?source=${source}&target=${target}`);
+    const res = await fetch(`${API_BASE}/predict`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ switch_id: source, port_no: target, features: {} })
+    });
     if (!res.ok) throw new Error('Network response was not ok');
     return await res.json();
   } catch (error) {

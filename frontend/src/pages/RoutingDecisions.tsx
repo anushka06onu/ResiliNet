@@ -10,7 +10,10 @@ const RoutingDecisions = () => {
             <Route className="text-purple-500" />
             Routing Decisions Log
           </h2>
-          <p className="text-slate-400 text-sm">Review OpenFlow installations and safety checks.</p>
+          <p className="text-slate-400 text-sm">Audit log of automated traffic engineering and path modifications.</p>
+        </div>
+        <div className="bg-amber-900/30 text-amber-400 border border-amber-500/50 px-3 py-1.5 rounded-md text-xs font-bold tracking-wider uppercase">
+          DEMO SCENARIO — VALUES ARE ILLUSTRATIVE
         </div>
       </header>
 
@@ -120,7 +123,7 @@ const RoutingDecisions = () => {
               </ul>
             </div>
             <p>
-              If all safety checks pass, the controller executes `ovs-ofctl add-flow` to physically install high-priority OpenFlow rules in the Mininet switches, immediately steering traffic.
+              If all safety checks pass, the controller is designed to execute `ovs-ofctl add-flow` to physically install high-priority OpenFlow rules in the Mininet switches. (This page represents an illustrative routing-decision workflow until live controller integration is complete).
             </p>
           </div>
         </div>

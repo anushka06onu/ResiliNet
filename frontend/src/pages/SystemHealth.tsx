@@ -6,11 +6,11 @@ const SystemHealth = () => {
   const { systemStatus } = useStore();
 
   const metrics = [
-    { label: 'Collector Status', value: 'Active', icon: <Database size={16} />, status: 'good' },
-    { label: 'Model Version', value: 'LightGBM v1.4.2 (Calibrated)', icon: <Cpu size={16} />, status: 'info' },
+    { label: 'Collector Status', value: 'Not connected', icon: <Database size={16} />, status: 'error' },
+    { label: 'Model Version', value: 'Development artifact', icon: <Cpu size={16} />, status: 'info' },
     { label: 'WebSocket Connection', value: systemStatus === 'connected' ? 'Connected' : 'Disconnected', icon: <Network size={16} />, status: systemStatus === 'connected' ? 'good' : 'error' },
-    { label: 'Controller Status', value: 'Ready', icon: <Server size={16} />, status: 'good' },
-    { label: 'API Latency', value: '12ms', icon: <Clock size={16} />, status: 'good' },
+    { label: 'Controller Status', value: 'Not connected', icon: <Server size={16} />, status: 'error' },
+    { label: 'Experiment Source', value: 'Synthetic', icon: <Clock size={16} />, status: 'info' },
   ];
 
   const recentLogs = [

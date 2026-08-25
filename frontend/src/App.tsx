@@ -15,15 +15,18 @@ function App() {
   const { setSystemStatus } = useStore();
 
   useEffect(() => {
+    const WS_BASE = import.meta.env.VITE_WS_BASE_URL ?? 'ws://localhost:8000/api/v1/stream';
+    const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
+    
     // Establish WebSocket Connection
-    const ws = new WebSocket('ws://localhost:8000/api/v1/stream');
+    const ws = new WebSocket(WS_BASE);
     
     ws.onopen = () => {
       // Fetch system status via REST on connect
-      fetch('http://localhost:8000/api/v1/system/status')
+      fetch(`${API_BASE}/system/status`)
         .then(r => r.json())
         .then(data => setSystemStatus(data.status, data.version, data.active_connections))
-        .catch(() => setSystemStatus('LIVE LAB', '1.1.0', 1));
+        .catch(() => setSystemStatus('DEMO DATA', 'Frontend Demo', 0));
     };
 
     ws.onmessage = (event) => {

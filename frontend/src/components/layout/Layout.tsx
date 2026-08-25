@@ -54,6 +54,7 @@ const Layout = () => {
           <div className={`text-xs px-3 py-1.5 rounded-md border text-center font-bold tracking-wider uppercase
             ${systemStatus === 'LIVE LAB' ? 'bg-emerald-900/30 text-emerald-400 border-emerald-500/50' : 
               systemStatus === 'EXPERIMENT REPLAY' ? 'bg-indigo-900/30 text-indigo-400 border-indigo-500/50' :
+              systemStatus === 'DEMO DATA' ? 'bg-amber-900/30 text-amber-400 border-amber-500/50' :
               systemStatus === 'DISCONNECTED' ? 'bg-red-900/30 text-red-400 border-red-500/50' :
               'bg-slate-800 text-slate-300 border-slate-700'
             }`}

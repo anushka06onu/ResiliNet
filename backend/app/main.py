@@ -66,8 +66,8 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Background task to stream live telemetry to all connected clients
-async def stream_telemetry():
+# Background task to stream demo telemetry to all connected clients
+async def stream_demo_telemetry():
     while True:
         await asyncio.sleep(2.0) # Emit every 2 seconds
         if not manager.active_connections:
@@ -75,6 +75,8 @@ async def stream_telemetry():
             
         # Example Link Telemetry event
         event = {
+            "mode": "DEMO_DATA",
+            "source": "generated_frontend_demonstration",
             "type": "link_telemetry",
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "experiment_id": "exp_001_live",
@@ -90,7 +92,7 @@ async def stream_telemetry():
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(stream_telemetry())
+    asyncio.create_task(stream_demo_telemetry())
 
 # ---------------------------------------------------------
 # System & Topology Endpoints

@@ -9,7 +9,12 @@ const Intelligence = () => {
           <BrainCircuit className="text-indigo-500" />
           Predictive Intelligence
         </h2>
-        <p className="text-slate-400 text-sm">Deep-dive into the LightGBM evaluation metrics and SHAP explainability.</p>
+        <div className="flex items-center gap-4">
+          <p className="text-slate-400 text-sm">Real-time inference and model explanations from the predictive engine.</p>
+          <div className="bg-amber-900/30 text-amber-400 border border-amber-500/50 px-3 py-1.5 rounded-md text-xs font-bold tracking-wider uppercase">
+            DEMO SCENARIO — VALUES ARE ILLUSTRATIVE
+          </div>
+        </div>
       </header>
 
       <div className="grid grid-cols-3 gap-6 mb-8">
