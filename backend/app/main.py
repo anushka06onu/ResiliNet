@@ -6,6 +6,9 @@ import sys
 import asyncio
 import random
 from datetime import datetime
+from pydantic import BaseModel
+import random
+from datetime import datetime
 
 # Import routers
 try:
@@ -73,33 +76,60 @@ async def stream_demo_telemetry():
         if not manager.active_connections:
             continue
             
-        # Example Link Telemetry event
-        event = {
-            "mode": "DEMO_DATA",
-            "source": "generated_frontend_demonstration",
-            "type": "link_telemetry",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "experiment_id": "exp_001_live",
-            "payload": {
-                "link_id": "s1-s2",
-                "utilization": round(random.uniform(0.1, 0.9), 2),
-                "latency_ms": round(random.uniform(10, 80), 1),
-                "loss_rate": round(random.uniform(0, 0.05), 3),
-                "predicted_risk": round(random.uniform(0, 1), 2)
-            }
+class TelemetryPayload(BaseModel):
+    switch_id: str
+    port_no: str
+    features: dict
+
+@app.post("/api/v1/telemetry/ingest")
+async def ingest_telemetry(payload: TelemetryPayload):
+    event = {
+        "mode": "LIVE_LAB",
+        "source": "mininet_ryu",
+        "type": "link_telemetry",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "experiment_id": "exp_001_live",
+        "payload": {
+            "link_id": f"{payload.switch_id}-p{payload.port_no}",
+            "utilization": round(payload.features.get("utilization", 0.0), 4),
+            "latency_ms": 0.0, # Cannot be calculated from pure port stats
+            "loss_rate": payload.features.get("tx_dropped", 0.0),
+            "predicted_risk": 0.0
         }
-        await manager.broadcast(event)
+    }
+    
+    # Attempt prediction
+    try:
+        from app.api.predict import explainer, MODEL_LOADED
+        if MODEL_LOADED:
+            import pandas as pd
+            # Create df matching what the model expects
+            # For demonstration, we just pass the features directly, though in reality it might need specific columns
+            df = pd.DataFrame([payload.features])
+            
+            # The model might fail if columns are missing, so we use a try-except
+            try:
+                prob = explainer.model.predict(df)[0]
+                event["payload"]["predicted_risk"] = float(prob)
+            except Exception as e:
+                print(f"Prediction failed: {e}")
+    except Exception as e:
+        pass
+
+    await manager.broadcast(event)
+    return {"status": "ingested"}
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(stream_demo_telemetry())
+    # Stop starting the demo telemetry now that we have a live ingest endpoint
+    pass
 
 # ---------------------------------------------------------
 # System & Topology Endpoints
 # ---------------------------------------------------------
 @app.get("/api/v1/system/status")
 def system_status():
-    return {"status": "LIVE LAB", "version": "1.1.0", "active_connections": len(manager.active_connections)}
+    return {"status": "DEMO DATA", "version": "1.1.0", "active_connections": len(manager.active_connections)}
 
 @app.get("/api/v1/topologies")
 def list_topologies():

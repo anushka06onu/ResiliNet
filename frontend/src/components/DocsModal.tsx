@@ -30,22 +30,9 @@ const DocsModal: React.FC<DocsModalProps> = ({ isOpen, onClose }) => {
           
           <section>
             <h3 className="text-lg font-semibold text-emerald-400 mb-3 border-b border-slate-700/50 pb-2">1. Model Evaluation Metrics (LightGBM)</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="glass-card p-4 text-center">
-                <div className="text-3xl font-bold text-white mb-1">92.4%</div>
-                <div className="text-xs uppercase tracking-widest text-slate-500 font-semibold">Accuracy</div>
-              </div>
-              <div className="glass-card p-4 text-center">
-                <div className="text-3xl font-bold text-white mb-1">0.91</div>
-                <div className="text-xs uppercase tracking-widest text-slate-500 font-semibold">F1-Score</div>
-              </div>
-              <div className="glass-card p-4 text-center">
-                <div className="text-3xl font-bold text-white mb-1">89.1%</div>
-                <div className="text-xs uppercase tracking-widest text-slate-500 font-semibold">Precision</div>
-              </div>
-              <div className="glass-card p-4 text-center">
-                <div className="text-3xl font-bold text-white mb-1">0.96</div>
-                <div className="text-xs uppercase tracking-widest text-slate-500 font-semibold">AUC-ROC</div>
+            <div className="glass-card p-6 text-center">
+              <div className="text-amber-400 font-medium border border-amber-500/30 bg-amber-500/10 px-4 py-2 rounded-md inline-block">
+                Pending Mininet-based experimental evaluation
               </div>
             </div>
           </section>

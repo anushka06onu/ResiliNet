@@ -43,16 +43,32 @@ export const getTopology = async () => {
 
 export const getPredictionAndExplanation = async (source: string, target: string) => {
   try {
-    if (isSimulationMode) throw new Error('Force mock'); // Skip fetch if we already know backend is down
-    const res = await fetch(`${API_BASE}/predict`, {
+    if (isSimulationMode) throw new Error('Force mock'); // Skip fetch if we are in DEMO DATA mode
+    
+    // In live mode, we fetch both predict and explain and combine them to match the frontend contract
+    const predictRes = await fetch(`${API_BASE}/predict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ switch_id: source, port_no: target, features: {} })
     });
-    if (!res.ok) throw new Error('Network response was not ok');
-    return await res.json();
+    
+    const explainRes = await fetch(`${API_BASE}/explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ switch_id: source, port_no: target, features: {} })
+    });
+
+    if (!predictRes.ok || !explainRes.ok) throw new Error('Network response was not ok');
+    
+    const predictData = await predictRes.json();
+    const explainData = await explainRes.json();
+
+    return {
+      predict: predictData,
+      explain: explainData
+    };
   } catch (error) {
-    // Realistic Mock Data for Simulation Mode
+    // Realistic Mock Data for Simulation Mode (DEMO DATA)
     return new Promise((resolve) => {
       setTimeout(() => {
         // Deterministic mock based on link names to simulate a persistent congested link

@@ -19,26 +19,12 @@ const Intelligence = () => {
 
       <div className="grid grid-cols-3 gap-6 mb-8">
         {/* Metric Cards */}
-        <div className="col-span-2 grid grid-cols-2 gap-4">
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-            <p className="text-slate-400 text-sm font-medium uppercase tracking-widest">ROC-AUC</p>
-            <div className="text-3xl font-bold text-white mt-1">0.960</div>
-            <p className="text-xs text-slate-500 mt-1">Excellent separability</p>
-          </div>
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-            <p className="text-slate-400 text-sm font-medium uppercase tracking-widest">PR-AUC</p>
-            <div className="text-3xl font-bold text-white mt-1">0.942</div>
-            <p className="text-xs text-slate-500 mt-1">High precision on rare congestion</p>
-          </div>
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-            <p className="text-slate-400 text-sm font-medium uppercase tracking-widest">Accuracy</p>
-            <div className="text-3xl font-bold text-white mt-1">92.4%</div>
-            <p className="text-xs text-slate-500 mt-1">Overall correctness</p>
-          </div>
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg">
-            <p className="text-slate-400 text-sm font-medium uppercase tracking-widest">Warning Lead Time</p>
-            <div className="text-3xl font-bold text-emerald-400 mt-1">18.5s</div>
-            <p className="text-xs text-slate-500 mt-1">Median advance notice</p>
+        <div className="col-span-2 bg-slate-900 border border-slate-800 p-6 rounded-lg flex items-center justify-center">
+          <div className="text-center">
+            <p className="text-slate-400 text-sm font-medium uppercase tracking-widest mb-3">Model Evaluation Metrics</p>
+            <div className="text-amber-400 border border-amber-500/30 bg-amber-500/10 px-4 py-2 rounded-md font-medium inline-block">
+              Pending Mininet-based experimental evaluation
+            </div>
           </div>
         </div>
 

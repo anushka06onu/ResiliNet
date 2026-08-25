@@ -18,10 +18,13 @@ const NetworkOverview = () => {
     <div className="p-6 h-full overflow-y-auto">
       <header className="mb-8">
         <h2 className="text-2xl font-bold text-white mb-2">Network Overview</h2>
-        <div className="flex gap-4 text-sm">
+        <div className="flex gap-4 text-sm items-center">
           <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Topology: <strong className="text-white">sndlib_campus</strong></span>
           <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Experiment: <strong className="text-white">exp_001_live</strong></span>
           <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Connections: <strong className="text-emerald-400">{activeConnections}</strong></span>
+          <div className="bg-amber-900/30 text-amber-400 border border-amber-500/50 px-3 py-1 rounded-md text-xs font-bold tracking-wider uppercase ml-auto">
+            ILLUSTRATIVE DEMO SCENARIO
+          </div>
         </div>
       </header>
 
@@ -41,8 +44,8 @@ const NetworkOverview = () => {
         <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg flex items-center justify-between">
           <div>
             <p className="text-slate-400 text-sm font-medium">Critical Flows</p>
-            <div className="text-2xl font-bold text-white mt-1">{stats.activeCriticalFlows}</div>
-            <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1"><ShieldCheck size={12}/> 0 SLA Violations</p>
+            <div className="text-2xl font-bold text-white mt-1">Pending</div>
+            <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1"><ShieldCheck size={12}/> Monitoring</p>
           </div>
           <ShieldCheck className="text-indigo-500/50" size={32} />
         </div>
@@ -59,8 +62,8 @@ const NetworkOverview = () => {
         <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg flex items-center justify-between">
           <div>
             <p className="text-slate-400 text-sm font-medium">Predictive Reroutes</p>
-            <div className="text-2xl font-bold text-white mt-1">{stats.predictiveReroutes}</div>
-            <p className="text-xs text-indigo-400 mt-1">SLA violations avoided relative to baseline</p>
+            <div className="text-2xl font-bold text-white mt-1">Pending</div>
+            <p className="text-xs text-indigo-400 mt-1">Experimental validation pending</p>
           </div>
           <Route className="text-purple-500/50" size={32} />
         </div>
@@ -97,8 +100,8 @@ const NetworkOverview = () => {
 
             <div className="relative mt-4">
               <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900"></div>
-              <p className="text-xs font-bold text-emerald-400">14:32:01 - Route Verified & Outcome Measured</p>
-              <p className="text-sm text-slate-300">Port counters verify traffic shifted. SLA violation successfully avoided. Latency improved to 71ms.</p>
+              <p className="text-xs font-bold text-emerald-400">14:32:01 - Route Verification (Demo)</p>
+              <p className="text-sm text-slate-300">In a live lab, port counters will verify if traffic shifted and latency improved.</p>
             </div>
 
           </div>

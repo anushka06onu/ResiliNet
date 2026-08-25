@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from mininet.net import Mininet
-from mininet.node import Controller, OVSKernelSwitch
+from mininet.node import Controller, OVSKernelSwitch, RemoteController
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from mininet.link import TCLink
@@ -11,10 +11,10 @@ import os
 
 def create_small_network():
     """Create a minimal network with 2 switches and 4 hosts."""
-    net = Mininet(controller=Controller, switch=OVSKernelSwitch, link=TCLink)
+    net = Mininet(controller=RemoteController, switch=OVSKernelSwitch, link=TCLink)
 
     info('*** Adding controller\n')
-    net.addController('c0')
+    net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6653)
 
     info('*** Adding switches\n')
     s1 = net.addSwitch('s1')
@@ -38,6 +38,9 @@ def create_small_network():
 
     info('*** Starting network\n')
     net.start()
+    
+    # Wait for switches to connect to the controller
+    time.sleep(3)
 
     # Ensure output directory exists
     os.makedirs('data_pipeline/data', exist_ok=True)

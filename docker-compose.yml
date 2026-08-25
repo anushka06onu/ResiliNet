@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  mininet:
+    build:
+      context: .
+      dockerfile: Dockerfile.mininet
+    privileged: true
+    network_mode: "host"
+    volumes:
+      - ./network:/app/network
+      - /lib/modules:/lib/modules:ro
+    command: /bin/bash -c "ryu-manager /app/network/controller/resilinet_ryu.py & sleep 5 && python3 /app/network/topologies/small_test.py"

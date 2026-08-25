@@ -12,7 +12,7 @@ import Methodology from './pages/Methodology';
 import SystemHealth from './pages/SystemHealth';
 
 function App() {
-  const { setSystemStatus } = useStore();
+  const { setSystemStatus, setWsConnected } = useStore();
 
   useEffect(() => {
     const WS_BASE = import.meta.env.VITE_WS_BASE_URL ?? 'ws://localhost:8000/api/v1/stream';
@@ -22,6 +22,7 @@ function App() {
     const ws = new WebSocket(WS_BASE);
     
     ws.onopen = () => {
+      setWsConnected(true);
       // Fetch system status via REST on connect
       fetch(`${API_BASE}/system/status`)
         .then(r => r.json())
@@ -38,11 +39,12 @@ function App() {
     };
 
     ws.onclose = () => {
+      setWsConnected(false);
       setSystemStatus('DISCONNECTED', 'Unknown', 0);
     };
 
     return () => ws.close();
-  }, [setSystemStatus]);
+  }, [setSystemStatus, setWsConnected]);
 
   return (
     <Router>
