@@ -118,14 +118,14 @@ No final Mininet-derived performance values are claimed in this README.
 
 The React dashboard is organized into eight views:
 
-1. **Network Overview** â€“ high-level network and alert status
-2. **Digital Twin** â€“ interactive Cytoscape topology and element inspection
-3. **Flow & SLA Monitor** â€“ application-flow and service-level view
-4. **Predictive Intelligence** â€“ model and explanation presentation
-5. **Routing Decisions** â€“ routing workflow, safeguards, and comparison structure
-6. **Simulation & Replay** â€“ planned laboratory and replay controls
-7. **Evidence & Methodology** â€“ provenance and methodological documentation
-8. **System Health & Audit** â€“ connection and subsystem-status presentation
+1. **Network Overview** - high-level network and alert status
+2. **Digital Twin** - interactive Cytoscape topology and element inspection
+3. **Flow & SLA Monitor** - application-flow and service-level view
+4. **Predictive Intelligence** - model and explanation presentation
+5. **Routing Decisions** - routing workflow, safeguards, and comparison structure
+6. **Simulation & Replay** - planned laboratory and replay controls
+7. **Evidence & Methodology** - provenance and methodological documentation
+8. **System Health & Audit** - connection and subsystem-status presentation
 
 The interface is designed to distinguish four data modes:
 
@@ -153,19 +153,19 @@ Only the first two modes should be used as experimental evidence.
 
 ```text
 ResiliNet/
-â”œâ”€â”€ backend/                 # FastAPI application and prediction endpoints
-â”œâ”€â”€ controller/              # Planned controller and flow-management modules
-â”œâ”€â”€ data_pipeline/           # OVS collection, windowing, labels, and features
-â”œâ”€â”€ docs/                    # Planned dataset/model cards and reports
-â”œâ”€â”€ experiments/             # Planned experiment matrix, runner, and results
-â”œâ”€â”€ frontend/                # React/TypeScript dashboard
-â”œâ”€â”€ ml/                      # Model training, evaluation, calibration, and SHAP
-â”œâ”€â”€ network/                 # Topologies, traffic profiles, scenarios, routing prototype
-â”œâ”€â”€ replay/                  # Planned replay generation and serving
-â”œâ”€â”€ routing/                 # Planned policy-comparison modules
-â”œâ”€â”€ docker-compose.yml
-â”œâ”€â”€ Makefile
-â””â”€â”€ README.md
+|-- backend/                 # FastAPI application and prediction endpoints
+|-- controller/              # Planned controller and flow-management modules
+|-- data_pipeline/           # OVS collection, windowing, labels, and features
+|-- docs/                    # Planned dataset/model cards and reports
+|-- experiments/             # Planned experiment matrix, runner, and results
+|-- frontend/                # React/TypeScript dashboard
+|-- ml/                      # Model training, evaluation, calibration, and SHAP
+|-- network/                 # Topologies, traffic profiles, scenarios, routing prototype
+|-- replay/                  # Planned replay generation and serving
+|-- routing/                 # Planned policy-comparison modules
+|-- docker-compose.yml
+|-- Makefile
+`-- README.md
 ```
 
 ## Quick start
@@ -288,7 +288,7 @@ Before publishing final experimental results, the repository should include:
 ## Roadmap
 
 - [ ] Replace all silent mock fallbacks with explicit data-mode transitions
-- [ ] Configure environment-based REST and WebSocket endpoints
+- [x] Configure environment-based REST and WebSocket endpoints
 - [ ] Align frontend request contracts with FastAPI endpoints
 - [ ] Connect streamed telemetry to the Zustand store and Cytoscape graph
 - [ ] Implement recorded experiment replay
