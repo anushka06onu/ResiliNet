@@ -2,6 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
+import sys
+
+# Import routers
+try:
+    from app.api.predict import router as predict_router
+except ImportError:
+    # Handle local testing paths
+    sys.path.append(os.path.dirname(__file__))
+    from api.predict import router as predict_router
 
 app = FastAPI(
     title="ResiliNet API",
@@ -17,6 +26,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register routers
+app.include_router(predict_router, prefix="/api/v1", tags=["ML"])
 
 @app.get("/health")
 def health_check():
