@@ -12,7 +12,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ selectedElement }) => {
   useEffect(() => {
     if (selectedElement && selectedElement.type === 'edge') {
       setLoading(true);
-      getPredictionAndExplanation(selectedElement.data.source, selectedElement.data.target)
+      getPredictionAndExplanation(selectedElement.data.source, selectedElement.data.source_port)
         .then(data => {
           setInsight(data);
           setLoading(false);

@@ -41,16 +41,18 @@ export const getTopology = async () => {
   }
 };
 
-export const getPredictionAndExplanation = async (source: string, target: string) => {
+export const getPredictionAndExplanation = async (
+  switchId: string,
+  portNo: string
+) => {
   try {
     if (isSimulationMode) throw new Error('Force mock'); // Skip fetch if we are in DEMO DATA mode
     
-    // In live mode, we fetch both predict and explain from the backend's combined endpoint
-    // link_id format in backend is switch-pport (e.g. s1-p2). If source/target are provided instead, we might need a mapping, but for simplicity let's assume source-target is the link_id format requested here.
-    const linkId = `${source}-${target}`;
-    const res = await fetch(`${API_BASE}/links/${linkId}/latest-prediction`, {
-      method: 'GET'
-    });
+    const linkId = `${switchId}-p${portNo}`;
+    const res = await fetch(
+      `${API_BASE}/links/${encodeURIComponent(linkId)}/latest-prediction`,
+      { method: 'GET' }
+    );
 
     if (!res.ok) throw new Error('Network response was not ok');
     
@@ -61,7 +63,7 @@ export const getPredictionAndExplanation = async (source: string, target: string
     return new Promise((resolve) => {
       setTimeout(() => {
         // Deterministic mock based on link names to simulate a persistent congested link
-        const isCongested = (source === 'dist2' && target === 'acc2') || (source === 'core1' && target === 'dist1');
+        const isCongested = (switchId === 'dist2' && portNo === '2') || (switchId === 'core1' && portNo === '2');
         const prob = isCongested ? 0.88 : (Math.random() * 0.15 + 0.05);
         
         resolve({

@@ -161,7 +161,7 @@ class ResiliNetRyuController(app_manager.RyuApp):
                             "utilization": min(utilization, 1.0),
                             "loss_mean_30s": loss_rate,
                             "tx_dropped_max": d_tx_dropped,
-                            "latency_mean_30s": 0.0,
+                            "latency_mean_30s": None,
                             "rx_bytes_slope": rx_rate,
                             "tx_bytes_rate": tx_rate
                         }

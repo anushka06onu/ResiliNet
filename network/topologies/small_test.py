@@ -8,6 +8,7 @@ from mininet.link import TCLink
 import time
 import csv
 import os
+import json
 
 def create_small_network():
     """Create a minimal network with 2 switches and 4 hosts."""
@@ -41,6 +42,29 @@ def create_small_network():
     
     # Wait for switches to connect to the controller
     time.sleep(3)
+
+    info('*** Exporting Live Topology\n')
+    topology_data = {"nodes": [], "links": [], "mode": "LIVE LAB"}
+    for node in net.switches:
+        topology_data["nodes"].append({"id": node.name, "type": "switch"})
+    for node in net.hosts:
+        topology_data["nodes"].append({"id": node.name, "type": "host"})
+        
+    for link in net.links:
+        src = link.intf1.node.name
+        dst = link.intf2.node.name
+        src_port = link.intf1.node.ports[link.intf1]
+        dst_port = link.intf2.node.ports[link.intf2]
+        topology_data["links"].append({
+            "source": src,
+            "source_port": str(src_port),
+            "target": dst,
+            "target_port": str(dst_port)
+        })
+        
+    os.makedirs('frontend/public', exist_ok=True)
+    with open('frontend/public/topology.json', 'w') as f:
+        json.dump(topology_data, f, indent=2)
 
     # Ensure output directory exists
     os.makedirs('data_pipeline/data', exist_ok=True)
