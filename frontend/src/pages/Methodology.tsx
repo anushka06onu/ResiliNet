@@ -27,14 +27,14 @@ const Methodology = () => {
           <ul className="space-y-3 text-sm text-slate-300 list-disc list-inside">
             <li><strong>Topology Sourcing:</strong> Network maps derived from the <em>SNDlib (Survivable Network Design Library)</em> to simulate realistic telecommunication backbones.</li>
             <li><strong>Number of Experiments:</strong> This demonstration currently uses a synthetic telemetry dataset containing 100 generated experiment identifiers. Mininet-based experimental validation is in progress.</li>
-            <li><strong>Data Splitting (Preventing AI "Cheating"):</strong> The dataset is split strictly by complete experiments (60% Train, 20% Val, 20% Test) so the AI can never peek at future events.</li>
+            <li><strong>Data Splitting (Preventing AI "Cheating"):</strong> The dataset is split strictly by complete experiments (60% Train, 20% Val, 20% Test) to reduce temporal and scenario leakage between partitions.</li>
           </ul>
         </section>
 
         <section className="bg-slate-900 border border-slate-800 rounded-lg p-6">
           <h3 className="text-xl font-bold text-white mb-4 border-b border-slate-800 pb-2">SLA Threshold Definitions (What counts as a "Failure"?)</h3>
           <p className="text-sm text-slate-400 mb-4">
-            The AI considers a link "failed" (or congested) if any of the following happens in the next 30 seconds:
+            The AI considers a link congested if any of the following happens in the next 30 seconds:
           </p>
           <div className="bg-slate-800 p-4 rounded font-mono text-sm text-slate-300">
             y_et = 1 IF:<br/>

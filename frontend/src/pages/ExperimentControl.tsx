@@ -104,7 +104,7 @@ const ExperimentControl = () => {
                Historical Data Replay
              </h3>
              <p className="text-sm text-slate-400 mb-4">
-               For demonstration, you can load a pre-recorded dataset to see the AI predict network crashes that happened in the past.
+               For demonstration, you can load a pre-recorded dataset to see the AI demonstrate predicted congestion-related SLA violations that happened in the past.
              </p>
              <button onClick={handleReplay} className="w-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/50 hover:bg-indigo-500/30 py-2 rounded flex justify-center items-center gap-2 transition-colors mb-3">
                <RefreshCw size={16} /> Load Replay Dataset

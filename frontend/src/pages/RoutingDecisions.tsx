@@ -123,7 +123,7 @@ const RoutingDecisions = () => {
               </ul>
             </div>
             <p>
-              If all safety checks pass, the controller is designed to execute `ovs-ofctl add-flow` to physically install high-priority OpenFlow rules in the Mininet switches. (This page represents an illustrative routing-decision workflow until live controller integration is complete).
+              If all safety checks pass, the controller is designed to execute `ovs-ofctl add-flow` to install high-priority OpenFlow rules in the emulated Open vSwitch network. (This page represents an illustrative routing-decision workflow until live controller integration is complete).
             </p>
           </div>
         </div>
