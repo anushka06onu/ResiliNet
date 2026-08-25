@@ -1,0 +1,94 @@
+{
+    "evaluation_metadata": {
+        "test_experiment_ids": [
+            "exp_059",
+            "exp_055",
+            "exp_005",
+            "exp_098",
+            "exp_089",
+            "exp_061",
+            "exp_038",
+            "exp_008",
+            "exp_069",
+            "exp_042",
+            "exp_013",
+            "exp_034",
+            "exp_033",
+            "exp_062",
+            "exp_080",
+            "exp_030",
+            "exp_003",
+            "exp_063",
+            "exp_095",
+            "exp_050"
+        ],
+        "total_test_samples": 1774,
+        "positive_class_ratio": 0.23900789177001128
+    },
+    "models": {
+        "Static_Threshold": {
+            "accuracy": 0.9520856820744081,
+            "precision": 0.869281045751634,
+            "recall": 0.9410377358490566,
+            "f1": 0.9037372593431483,
+            "roc_auc": 0.948296645702306,
+            "pr_auc": 0.8321187135593213,
+            "brier_score": 0.047914317925591886,
+            "fpr": 0.044444444444444446,
+            "confusion_matrix": {
+                "tn": 1290,
+                "fp": 60,
+                "fn": 25,
+                "tp": 399
+            }
+        },
+        "Logistic_Regression": {
+            "accuracy": 0.9791431792559189,
+            "precision": 0.9574468085106383,
+            "recall": 0.9551886792452831,
+            "f1": 0.9563164108618654,
+            "roc_auc": 0.9977183787561147,
+            "pr_auc": 0.9930596314182629,
+            "brier_score": 0.01620167909011987,
+            "fpr": 0.013333333333333334,
+            "confusion_matrix": {
+                "tn": 1332,
+                "fp": 18,
+                "fn": 19,
+                "tp": 405
+            }
+        },
+        "Random_Forest": {
+            "accuracy": 1.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "roc_auc": 1.0,
+            "pr_auc": 1.0,
+            "brier_score": 0.00016054114994363023,
+            "fpr": 0.0,
+            "confusion_matrix": {
+                "tn": 1350,
+                "fp": 0,
+                "fn": 0,
+                "tp": 424
+            }
+        },
+        "LightGBM": {
+            "accuracy": 0.7609921082299888,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "roc_auc": 0.9999965059399021,
+            "pr_auc": 0.9999778545486757,
+            "brier_score": 0.11212295941310105,
+            "fpr": 0.0,
+            "confusion_matrix": {
+                "tn": 1350,
+                "fp": 0,
+                "fn": 424,
+                "tp": 0
+            }
+        }
+    }
+}
