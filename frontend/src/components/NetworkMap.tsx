@@ -112,10 +112,10 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
         });
 
         // Hover effects
-        cy.on('mouseover', 'node', (e) => {
+        cy.on('mouseover', 'node', () => {
           document.body.style.cursor = 'pointer';
         });
-        cy.on('mouseout', 'node', (e) => {
+        cy.on('mouseout', 'node', () => {
           document.body.style.cursor = 'default';
         });
 

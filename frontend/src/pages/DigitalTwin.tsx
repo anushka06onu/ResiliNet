@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Network, Activity, Cpu, ShieldAlert, Cpu as CpuIcon } from 'lucide-react';
 import NetworkMap from '../components/NetworkMap'; // Reusing the cytoscape component
 
 const DigitalTwin = () => {
