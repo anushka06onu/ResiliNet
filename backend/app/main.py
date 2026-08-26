@@ -127,7 +127,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
         "payload": {
             "link_id": link_id,
             "utilization": round(computed_features.get("utilization", 0.0), 4),
-            "latency_ms": None,
+            "latency_ms": computed_features.get("control_plane_rtt_ms"),
             "loss_rate": computed_features.get("loss_mean_30s", 0.0),
             "predicted_risk": 0.0
         }

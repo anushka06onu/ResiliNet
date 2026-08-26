@@ -14,7 +14,7 @@ class PredictiveRouter:
     Calculates routing paths based on ML congestion predictions and installs physical OpenFlow rules.
     """
     def __init__(self, topology_json='network/topologies/topology.json', min_risk_improvement=0.2, cooldown=10):
-        self.graph = nx.Graph()
+        self.graph = nx.DiGraph()
         self.load_topology(topology_json)
         self.last_reroute_time = {} # Track cooldowns per flow
         self.min_risk_improvement = min_risk_improvement
@@ -33,7 +33,15 @@ class PredictiveRouter:
             
         for link in data.get('links', []):
             base_cost = 1
-            self.graph.add_edge(link['source'], link['target'], weight=base_cost, original_weight=base_cost, risk=0.0, source_port=link['source_port'])
+            src = link['source']
+            dst = link['target']
+            src_port = link.get('source_port')
+            dst_port = link.get('target_port')
+            
+            # Forward edge
+            self.graph.add_edge(src, dst, weight=base_cost, original_weight=base_cost, risk=0.0, out_port=src_port)
+            # Reverse edge
+            self.graph.add_edge(dst, src, weight=base_cost, original_weight=base_cost, risk=0.0, out_port=dst_port)
 
     def update_link_predictions(self, predictions):
         """
@@ -51,17 +59,21 @@ class PredictiveRouter:
             prob = pred['congestion_prob']
             
             if self.graph.has_edge(src, dst):
-                # Penalty curve: drastic increase if probable violation
                 penalty = 1000 if prob > 0.5 else (prob * 10)
                 self.graph[src][dst]['weight'] += penalty
                 self.graph[src][dst]['risk'] = prob
+            # Optionally update reverse edge if congestion is assumed symmetric
+            if self.graph.has_edge(dst, src):
+                penalty = 1000 if prob > 0.5 else (prob * 10)
+                self.graph[dst][src]['weight'] += penalty
+                self.graph[dst][src]['risk'] = prob
 
     def calculate_path(self, source, target):
         """Calculate shortest path using current weights (Dijkstra)."""
         try:
             return nx.shortest_path(self.graph, source=source, target=target, weight='weight')
-        except nx.NetworkXNoPath:
-            logging.error(f"No path between {source} and {target}")
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            logging.error(f"No path or missing nodes between {source} and {target}")
             return None
 
     def calculate_path_risk(self, path):
@@ -93,8 +105,12 @@ class PredictiveRouter:
         if current_risk - proposed_risk < self.min_risk_improvement:
             return False, f"Risk improvement ({current_risk - proposed_risk:.2f}) below threshold"
 
+        proposed_reverse_path = self.calculate_path(target, source)
+        if not proposed_reverse_path:
+            return False, "Reverse path unreachable"
+
         # Safety checks passed. Execute physical installation.
-        success = self.install_openflow_route(proposed_path, nw_src, nw_dst, priority)
+        success = self.install_bidirectional_route(proposed_path, proposed_reverse_path, nw_src, nw_dst, priority)
         
         if success:
             self.last_reroute_time[flow_id] = now
@@ -104,32 +120,62 @@ class PredictiveRouter:
             logging.error(f"Failed to install OpenFlow rules for {flow_id}")
             return False, "OpenFlow installation failed"
 
-    def install_openflow_route(self, path, nw_src, nw_dst, priority=100):
+    def _install_path(self, path, nw_src, nw_dst, priority, installed_rules):
+        """Helper to install a single directional path and track installed rules for rollback."""
+        for i in range(len(path) - 1):
+            current_node = path[i]
+            next_node = path[i+1]
+            
+            out_port = self.graph[current_node][next_node].get('out_port')
+            if not out_port:
+                logging.error(f"Cannot resolve out_port from {current_node} to {next_node}")
+                return False
+            
+            if 'switch' in self.graph.nodes[current_node].get('type', 'switch'):
+                cmd = [
+                    "sudo", "ovs-ofctl", "add-flow", current_node,
+                    f"priority={priority},ip,nw_src={nw_src},nw_dst={nw_dst},actions=output:{out_port}"
+                ]
+                res = subprocess.run(cmd, capture_output=True)
+                if res.returncode != 0:
+                    logging.error(f"Failed to install flow on {current_node}: {res.stderr.decode('utf-8')}")
+                    return False
+                installed_rules.append((current_node, nw_src, nw_dst, priority))
+        return True
+
+    def install_bidirectional_route(self, forward_path, reverse_path, nw_src, nw_dst, priority=100):
         """
-        Physically injects OpenFlow rules into OVS switches along the path.
+        Physically injects OpenFlow rules into OVS switches along both paths.
+        Implements rollback if any installation fails.
         """
+        installed_rules = []
         try:
-            for i in range(len(path) - 1):
-                current_node = path[i]
-                next_node = path[i+1]
+            # Install forward path
+            if not self._install_path(forward_path, nw_src, nw_dst, priority, installed_rules):
+                self._rollback_rules(installed_rules)
+                return False
                 
-                # Resolve out_port from topology graph
-                out_port = self.graph[current_node][next_node].get('source_port')
-                if not out_port:
-                    logging.error(f"Cannot resolve port from {current_node} to {next_node}")
-                    continue
+            # Install reverse path (swap nw_src and nw_dst)
+            if not self._install_path(reverse_path, nw_dst, nw_src, priority, installed_rules):
+                self._rollback_rules(installed_rules)
+                return False
                 
-                if 'switch' in self.graph.nodes[current_node].get('type', 'switch'):
-                    cmd = [
-                        "sudo", "ovs-ofctl", "add-flow", current_node,
-                        f"priority={priority},ip,nw_src={nw_src},nw_dst={nw_dst},actions=output:{out_port}"
-                    ]
-                    # We use shell=False for security, but echo the command to simulate success if Mininet isn't running
-                    subprocess.run(cmd, check=False, capture_output=True)
             return True
         except Exception as e:
             logging.error(f"OpenFlow rule installation error: {e}")
+            self._rollback_rules(installed_rules)
             return False
+
+    def _rollback_rules(self, installed_rules):
+        """Rollback successfully installed rules if a later rule fails."""
+        logging.info("Rolling back partially installed OpenFlow rules...")
+        for rule in installed_rules:
+            current_node, nw_src, nw_dst, priority = rule
+            cmd = [
+                "sudo", "ovs-ofctl", "del-flows", current_node,
+                f"ip,nw_src={nw_src},nw_dst={nw_dst}"
+            ]
+            subprocess.run(cmd, capture_output=True)
 
 if __name__ == '__main__':
     router = PredictiveRouter()

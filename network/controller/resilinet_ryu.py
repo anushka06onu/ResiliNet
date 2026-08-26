@@ -168,7 +168,7 @@ class ResiliNetRyuController(app_manager.RyuApp):
                     capacity_bps = 10_000_000 
                     utilization = max(rx_bps, tx_bps) / capacity_bps
                     
-                    latency = self.latency_stats.get(dpid, 10.0) # default 10ms if missing
+                    latency = self.latency_stats.get(dpid, None)
                     
                     # Send telemetry to API with consistent ML features
                     telemetry = {
@@ -178,7 +178,7 @@ class ResiliNetRyuController(app_manager.RyuApp):
                             "utilization": min(utilization, 1.0),
                             "loss_mean_30s": loss_rate,
                             "tx_dropped_max": d_tx_dropped,
-                            "latency_mean_30s": latency,
+                            "control_plane_rtt_ms": latency,
                             "rx_bytes_slope": rx_rate,
                             "tx_bytes_rate": tx_rate
                         }

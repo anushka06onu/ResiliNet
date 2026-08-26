@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
+import argparse
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -50,7 +51,7 @@ def generate_mock_experiments():
                 'dst_switch': 's2',
                 'loss_mean_30s': loss_mean,
                 'tx_dropped_max': tx_dropped,
-                'latency_mean_30s': latency,
+                'control_plane_rtt_ms': latency,
                 'rx_bytes_slope': np.random.normal(100, 50),
                 'tx_bytes_rate': np.random.uniform(5000, 15000),
                 'current_sla_violated': 1 if (loss_mean > 2.0 or latency > 40) else 0
@@ -59,11 +60,21 @@ def generate_mock_experiments():
     df = pd.DataFrame(rows)
     
     # Calculate future-shifted 30-second label (approx 15 intervals of 2s)
-    # For each experiment, look ahead 15 rows for any SLA violation
-    df['sla_violated_in_horizon'] = (
-        df.groupby('experiment_id')['current_sla_violated']
-        .transform(lambda x: x.iloc[::-1].rolling(15, min_periods=1).max().iloc[::-1].shift(-1))
-    ).fillna(0).astype(int)
+    # Perform shift inside the group to avoid cross-experiment leakage
+    # Drop rows without a full 15-step horizon
+    def get_future_violations(group):
+        # Rolling max looking ahead 15 steps. Note that rolling works backwards,
+        # so we reverse the series, roll, and reverse back.
+        # But for the last 15 rows, they don't have a full horizon, so we set them to NaN
+        future_max = group['current_sla_violated'].iloc[::-1].rolling(15, min_periods=15).max().iloc[::-1].shift(-1)
+        group['sla_violated_in_horizon'] = future_max
+        return group
+
+    df = df.groupby('experiment_id', group_keys=False).apply(get_future_violations)
+    
+    # Drop the rows that do not have a full horizon
+    df = df.dropna(subset=['sla_violated_in_horizon'])
+    df['sla_violated_in_horizon'] = df['sla_violated_in_horizon'].astype(int)
     
     # Save the mock dataset to disk for the rest of the pipeline to see
     os.makedirs('data_pipeline/data', exist_ok=True)
@@ -130,7 +141,7 @@ def run_baselines(X_train, y_train, X_test, y_test):
     
     # 1. Static Rule (e.g. if latency > 30ms -> alert)
     print("Evaluating Static Threshold Baseline...")
-    static_probs = (X_test['latency_mean_30s'] > 30.0).astype(float).values
+    static_probs = (X_test['control_plane_rtt_ms'] > 30.0).astype(float).values
     results['Static_Threshold'] = evaluate_model("Static_Threshold", y_test, static_probs, threshold=0.5)
     
     # 2. Logistic Regression
@@ -150,9 +161,9 @@ def run_baselines(X_train, y_train, X_test, y_test):
     
     return results
 
-def train_lgbm_main():
+def train_lgbm_main(generate_synthetic=False):
     file_path = 'data_pipeline/data/features_with_experiments.csv'
-    if not os.path.exists(file_path) or True: # Force regenerate to apply new label logic
+    if generate_synthetic or not os.path.exists(file_path):
         df = generate_mock_experiments()
     else:
         df = pd.read_csv(file_path)
@@ -236,4 +247,8 @@ def train_lgbm_main():
     print("Saved LightGBM model to ml/artifacts/lightgbm_model.txt")
 
 if __name__ == '__main__':
-    train_lgbm_main()
+    parser = argparse.ArgumentParser(description="Train LightGBM Model for ResiliNet")
+    parser.add_argument("--generate-synthetic", action="store_true", help="Generate new synthetic dataset instead of using existing one")
+    args = parser.parse_args()
+    
+    train_lgbm_main(generate_synthetic=args.generate_synthetic)
