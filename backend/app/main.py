@@ -135,16 +135,16 @@ async def ingest_telemetry(payload: TelemetryPayload):
     
     # Attempt prediction
     try:
-        from app.api.predict import explainer, MODEL_LOADED
+        from app.api.predict import explainer, MODEL_LOADED, DECISION_THRESHOLD
         if MODEL_LOADED:
             import pandas as pd
-            MODEL_FEATURES = [
-                "loss_mean_30s",
-                "tx_dropped_max",
-                "latency_mean_30s",
-                "rx_bytes_slope",
-                "tx_bytes_rate",
-            ]
+            import sys
+            from pathlib import Path
+            project_root = str(Path(__file__).resolve().parents[2])
+            if project_root not in sys.path:
+                sys.path.append(project_root)
+            from ml.schema import MODEL_FEATURES
+            
             df = pd.DataFrame(
                 [computed_features],
                 columns=MODEL_FEATURES
@@ -153,6 +153,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
             try:
                 prob = explainer.model.predict(df)[0]
                 event["payload"]["predicted_risk"] = float(prob)
+                event["payload"]["is_violation_predicted"] = bool(prob > DECISION_THRESHOLD)
             except Exception as e:
                 print(f"Prediction failed: {e}")
     except Exception as e:
@@ -211,16 +212,16 @@ def get_latest_prediction(link_id: str):
     features = latest_features.get(link_id, {})
     
     try:
-        from app.api.predict import explainer, MODEL_LOADED
+        from app.api.predict import explainer, MODEL_LOADED, DECISION_THRESHOLD
         if MODEL_LOADED and features:
             import pandas as pd
-            MODEL_FEATURES = [
-                "loss_mean_30s",
-                "tx_dropped_max",
-                "latency_mean_30s",
-                "rx_bytes_slope",
-                "tx_bytes_rate",
-            ]
+            import sys
+            from pathlib import Path
+            project_root = str(Path(__file__).resolve().parents[2])
+            if project_root not in sys.path:
+                sys.path.append(project_root)
+            from ml.schema import MODEL_FEATURES
+            
             df = pd.DataFrame(
                 [features],
                 columns=MODEL_FEATURES
@@ -240,7 +241,7 @@ def get_latest_prediction(link_id: str):
                     "predict": {
                         "link_id": link_id,
                         "congestion_probability": prob,
-                        "is_violation_predicted": prob > 0.5,
+                        "is_violation_predicted": bool(prob > DECISION_THRESHOLD),
                         "horizon": "30s"
                     },
                     "explain": explanation

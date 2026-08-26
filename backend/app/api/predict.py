@@ -11,15 +11,29 @@ try:
     from ml.explain import ResiliNetExplainer
     import numpy as np
     import pandas as pd
+    import json
     from pathlib import Path
     
     ROOT = Path(__file__).resolve().parents[3]
     MODEL_PATH = ROOT / "ml" / "artifacts" / "lightgbm_model.txt"
+    EVAL_PATH = ROOT / "ml" / "artifacts" / "evaluation_report.json"
+    
     explainer = ResiliNetExplainer(model_path=str(MODEL_PATH))
     MODEL_LOADED = True
+    
+    DECISION_THRESHOLD = 0.5
+    try:
+        with open(EVAL_PATH, "r") as f:
+            eval_data = json.load(f)
+            DECISION_THRESHOLD = eval_data.get("evaluation_metadata", {}).get("lgbm_optimal_threshold", 0.5)
+    except Exception:
+        pass
+        
+    from ml.schema import MODEL_FEATURES
 except Exception as e:
     print(f"Warning: Failed to load ML Explainer: {e}")
     MODEL_LOADED = False
+    DECISION_THRESHOLD = 0.5
 
 router = APIRouter()
 
@@ -34,9 +48,8 @@ async def predict_congestion(data: FeatureVector):
         raise HTTPException(status_code=503, detail="ML Model not loaded")
         
     try:
-        # Convert to DataFrame
-        df = pd.DataFrame([data.features])
-        # Ensure columns match training data (in real app, use a saved column list)
+        # Convert to DataFrame using proper schema
+        df = pd.DataFrame([data.features], columns=MODEL_FEATURES).apply(pd.to_numeric, errors="coerce")
         
         # Predict probability
         prob = explainer.model.predict(df)[0]
@@ -45,7 +58,8 @@ async def predict_congestion(data: FeatureVector):
             "switch_id": data.switch_id,
             "port_no": data.port_no,
             "congestion_probability": float(prob),
-            "is_violation_predicted": bool(prob > 0.5)
+            "is_violation_predicted": bool(prob > DECISION_THRESHOLD),
+            "threshold_used": DECISION_THRESHOLD
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
