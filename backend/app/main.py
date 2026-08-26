@@ -138,11 +138,18 @@ async def ingest_telemetry(payload: TelemetryPayload):
         from app.api.predict import explainer, MODEL_LOADED
         if MODEL_LOADED:
             import pandas as pd
-            # Create df matching what the model expects
-            # For demonstration, we just pass the features directly, though in reality it might need specific columns
-            df = pd.DataFrame([payload.features])
+            MODEL_FEATURES = [
+                "loss_mean_30s",
+                "tx_dropped_max",
+                "latency_mean_30s",
+                "rx_bytes_slope",
+                "tx_bytes_rate",
+            ]
+            df = pd.DataFrame(
+                [computed_features],
+                columns=MODEL_FEATURES
+            ).apply(pd.to_numeric, errors="coerce")
             
-            # The model might fail if columns are missing, so we use a try-except
             try:
                 prob = explainer.model.predict(df)[0]
                 event["payload"]["predicted_risk"] = float(prob)
@@ -162,6 +169,14 @@ async def startup_event():
 # ---------------------------------------------------------
 # System & Topology Endpoints
 # ---------------------------------------------------------
+active_live_topology = None
+
+@app.post("/api/v1/topology/ingest")
+async def ingest_topology(payload: dict):
+    global active_live_topology
+    active_live_topology = payload
+    return {"status": "topology_ingested"}
+
 @app.get("/api/v1/system/status")
 def system_status():
     mode = "DEMO DATA"
@@ -178,6 +193,9 @@ def list_topologies():
 
 @app.get("/api/v1/topology/current")
 def get_current_topology():
+    if active_live_topology is not None:
+        return active_live_topology
+        
     topo_path = 'frontend/public/topology.json'
     if os.path.exists(topo_path):
         with open(topo_path, 'r') as f:
@@ -196,11 +214,27 @@ def get_latest_prediction(link_id: str):
         from app.api.predict import explainer, MODEL_LOADED
         if MODEL_LOADED and features:
             import pandas as pd
-            df = pd.DataFrame([features])
+            MODEL_FEATURES = [
+                "loss_mean_30s",
+                "tx_dropped_max",
+                "latency_mean_30s",
+                "rx_bytes_slope",
+                "tx_bytes_rate",
+            ]
+            df = pd.DataFrame(
+                [features],
+                columns=MODEL_FEATURES
+            ).apply(pd.to_numeric, errors="coerce")
             try:
                 prob = float(explainer.model.predict(df)[0])
                 explanation = explainer.get_local_explanation(df)
                 
+                # Replace NaN with None for JSON compliance
+                import math
+                for f in explanation.get("features", []):
+                    if isinstance(f.get("value"), float) and math.isnan(f["value"]):
+                        f["value"] = None
+                        
                 return {
                     "mode": "LIVE LAB",
                     "predict": {

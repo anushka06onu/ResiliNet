@@ -9,6 +9,7 @@ import time
 import csv
 import os
 import json
+import requests
 
 def create_small_network():
     """Create a minimal network with 2 switches and 4 hosts."""
@@ -62,9 +63,15 @@ def create_small_network():
             "target_port": str(dst_port)
         })
         
-    os.makedirs('frontend/public', exist_ok=True)
-    with open('frontend/public/topology.json', 'w') as f:
-        json.dump(topology_data, f, indent=2)
+    api_url = os.environ.get("RESILINET_API_URL", "http://127.0.0.1:8000")
+    try:
+        res = requests.post(f"{api_url}/api/v1/topology/ingest", json=topology_data, timeout=2)
+        if res.status_code == 200:
+            info('*** Topology successfully exported to API\n')
+        else:
+            info(f'*** API returned {res.status_code} on topology export\n')
+    except Exception as e:
+        info(f'*** Failed to export topology to API: {e}\n')
 
     # Ensure output directory exists
     os.makedirs('data_pipeline/data', exist_ok=True)

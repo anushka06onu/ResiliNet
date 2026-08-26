@@ -51,7 +51,7 @@ const DocsModal: React.FC<DocsModalProps> = ({ isOpen, onClose }) => {
             <div className="space-y-4">
               <div>
                 <h4 className="text-white font-medium mb-1">Windowing & Feature Engineering</h4>
-                <p className="text-sm leading-relaxed">Raw telemetry was processed into 5-second tumbling windows. We generated time-series features over 30-second and 60-second rolling windows, capturing means, maxes, and slopes (e.g. <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300">tx_bytes_mean_60s</code>, <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300">loss_mean_30s</code>) to capture the rate of change in traffic.</p>
+                <p className="text-sm leading-relaxed">Raw telemetry is observed approximately every two seconds. We generate time-series features over 30-second rolling windows, capturing means, maximums, and rate-of-change estimates (e.g. <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300">tx_bytes_rate</code>, <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300">loss_mean_30s</code>, <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300">tx_dropped_max</code>) to dynamically reflect traffic velocity.</p>
               </div>
               <div>
                 <h4 className="text-white font-medium mb-1">Machine Learning & Explainable AI (XAI)</h4>

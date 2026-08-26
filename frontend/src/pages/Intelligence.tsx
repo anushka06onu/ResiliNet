@@ -34,10 +34,9 @@ const Intelligence = () => {
             <Info className="text-indigo-400 shrink-0 mt-1" size={20} />
             <div>
               <h4 className="text-indigo-300 font-bold mb-2">Model Architecture</h4>
-              <p className="text-sm text-indigo-200/70 leading-relaxed">
-                A LightGBM classifier predicting a binary outcome: Will a link violate its SLA threshold in the subsequent 30 seconds? 
-                The model uses 5-second tumbling telemetry windows and 60-second rolling trends.
-              </p>
+              <p className="text-slate-300">
+                Telemetry is observed approximately every two seconds, with rolling statistics calculated over the previous 30 seconds.
+                </p>
             </div>
           </div>
         </div>
