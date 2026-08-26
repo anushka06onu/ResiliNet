@@ -160,11 +160,32 @@ class PredictiveRouter:
                 self._rollback_rules(installed_rules)
                 return False
                 
+            # Verify routing through counters
+            if not self._verify_installed_rules(installed_rules):
+                self._rollback_rules(installed_rules)
+                return False
+
             return True
         except Exception as e:
             logging.error(f"OpenFlow rule installation error: {e}")
             self._rollback_rules(installed_rules)
             return False
+
+    def _verify_installed_rules(self, installed_rules):
+        """Verify that the flows were successfully committed to the switch tables."""
+        for rule in installed_rules:
+            current_node, nw_src, nw_dst, _ = rule
+            cmd = ["sudo", "ovs-ofctl", "dump-flows", current_node]
+            res = subprocess.run(cmd, capture_output=True)
+            if res.returncode != 0:
+                logging.error(f"Failed to dump flows for verification on {current_node}")
+                return False
+            output = res.stdout.decode('utf-8')
+            # Check if our exact src/dst IP match is in the flow table
+            if f"nw_src={nw_src}" not in output or f"nw_dst={nw_dst}" not in output:
+                logging.error(f"Flow verification failed on {current_node}: Rule not found in dump")
+                return False
+        return True
 
     def _rollback_rules(self, installed_rules):
         """Rollback successfully installed rules if a later rule fails."""
