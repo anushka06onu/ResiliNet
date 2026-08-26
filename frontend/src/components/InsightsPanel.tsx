@@ -11,6 +11,7 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({ selectedElement }) => {
 
   useEffect(() => {
     if (selectedElement && selectedElement.type === 'edge') {
+      // eslint-disable-next-line react/set-state-in-effect
       setLoading(true);
       getPredictionAndExplanation(selectedElement.data.source, selectedElement.data.source_port)
         .then(data => {

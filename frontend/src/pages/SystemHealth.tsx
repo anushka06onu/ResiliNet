@@ -1,9 +1,9 @@
 
-import { Activity, Server, Cpu, Database, Network, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { Activity, Cpu, Database, Network, Clock, CheckCircle, XCircle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 const SystemHealth = () => {
-  const { systemStatus, wsConnected, dataMode, latestTelemetry } = useStore();
+  const { wsConnected, dataMode, latestTelemetry } = useStore();
   
   const isLive = dataMode === 'LIVE LAB';
   const lastTime = latestTelemetry?.timestamp ? new Date(latestTelemetry.timestamp).toLocaleTimeString() : 'Unknown';

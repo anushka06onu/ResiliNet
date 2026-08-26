@@ -34,7 +34,7 @@ function App() {
       try {
         const data = JSON.parse(event.data);
         updateTelemetry(data);
-      } catch (e) {}
+      } catch {}
     };
 
     ws.onclose = () => {

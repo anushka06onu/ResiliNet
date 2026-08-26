@@ -1,5 +1,5 @@
 
-import { FileText, Download, Code } from 'lucide-react';
+import { FileText, Code } from 'lucide-react';
 
 const Methodology = () => {
 

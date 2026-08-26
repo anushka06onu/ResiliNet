@@ -34,7 +34,7 @@ export const getTopology = async () => {
     if (!res.ok) throw new Error('Network response was not ok');
     isSimulationMode = false;
     return await res.json();
-  } catch (error) {
+  } catch {
     console.warn("Backend unreachable, falling back to Simulation Mode for Topology.");
     isSimulationMode = true;
     return MOCK_TOPOLOGY;
@@ -58,7 +58,7 @@ export const getPredictionAndExplanation = async (
     
     const data = await res.json();
     return data;
-  } catch (error) {
+  } catch {
     // Realistic Mock Data for Simulation Mode (DEMO DATA)
     return new Promise((resolve) => {
       setTimeout(() => {

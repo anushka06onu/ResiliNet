@@ -1,4 +1,4 @@
-import { useState } from 'react';
+
 import { Activity, ShieldCheck, AlertTriangle, Route } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
@@ -11,12 +11,7 @@ const NetworkOverview = () => {
   // We consider all non-at-risk links healthy for now in demo
   const healthyLinks = totalLinks - atRiskLinks;
 
-  const [stats] = useState({
-    activeCriticalFlows: 4,
-    slaViolations: 0,
-    predictiveReroutes: 3,
-    avgWarningTime: "18s"
-  });
+
 
   return (
     <div className="p-6 h-full overflow-y-auto">
