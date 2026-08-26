@@ -33,7 +33,7 @@ class PredictiveRouter:
             
         for link in data.get('links', []):
             base_cost = 1
-            self.graph.add_edge(link['source'], link['target'], weight=base_cost, original_weight=base_cost, risk=0.0)
+            self.graph.add_edge(link['source'], link['target'], weight=base_cost, original_weight=base_cost, risk=0.0, source_port=link['source_port'])
 
     def update_link_predictions(self, predictions):
         """
@@ -113,10 +113,11 @@ class PredictiveRouter:
                 current_node = path[i]
                 next_node = path[i+1]
                 
-                # In a real Mininet setup, we need the exact OpenFlow port mapping.
-                # Assuming port 1 connects to next_node for demonstration.
-                # A full implementation requires a topology mapping table.
-                out_port = 1 
+                # Resolve out_port from topology graph
+                out_port = self.graph[current_node][next_node].get('source_port')
+                if not out_port:
+                    logging.error(f"Cannot resolve port from {current_node} to {next_node}")
+                    continue
                 
                 if 'switch' in self.graph.nodes[current_node].get('type', 'switch'):
                     cmd = [

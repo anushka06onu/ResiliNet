@@ -26,6 +26,7 @@ class ResiliNetRyuController(app_manager.RyuApp):
         
         # State tracking for diff calculations
         self.port_stats = {} # {dpid: {port_no: {rx_bytes: X, tx_bytes: Y, rx_dropped: Z, tx_dropped: W, tx_packets: P, timestamp: T}}}
+        self.latency_stats = {} # {dpid: latency_ms}
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -104,8 +105,22 @@ class ResiliNetRyuController(app_manager.RyuApp):
     def _request_stats(self, datapath):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
+        
+        # Active latency probing
+        echo_req = parser.OFPEchoRequest(datapath, data=str(time.time()).encode('utf-8'))
+        datapath.send_msg(echo_req)
+        
         req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
         datapath.send_msg(req)
+        
+    @set_ev_cls(ofp_event.EventOFPEchoReply, [MAIN_DISPATCHER, CONFIG_DISPATCHER])
+    def _echo_reply_handler(self, ev):
+        try:
+            timestamp = float(ev.msg.data.decode('utf-8'))
+            rtt_ms = (time.time() - timestamp) * 1000
+            self.latency_stats[ev.msg.datapath.id] = rtt_ms
+        except Exception:
+            pass
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def _port_stats_reply_handler(self, ev):
@@ -153,6 +168,8 @@ class ResiliNetRyuController(app_manager.RyuApp):
                     capacity_bps = 10_000_000 
                     utilization = max(rx_bps, tx_bps) / capacity_bps
                     
+                    latency = self.latency_stats.get(dpid, 10.0) # default 10ms if missing
+                    
                     # Send telemetry to API with consistent ML features
                     telemetry = {
                         "switch_id": f"s{dpid}",
@@ -161,7 +178,7 @@ class ResiliNetRyuController(app_manager.RyuApp):
                             "utilization": min(utilization, 1.0),
                             "loss_mean_30s": loss_rate,
                             "tx_dropped_max": d_tx_dropped,
-                            "latency_mean_30s": None,
+                            "latency_mean_30s": latency,
                             "rx_bytes_slope": rx_rate,
                             "tx_bytes_rate": tx_rate
                         }
