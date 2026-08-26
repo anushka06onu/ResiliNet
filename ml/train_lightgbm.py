@@ -42,7 +42,10 @@ def generate_mock_experiments():
             congested = (t >= congestion_start)
             loss_mean = np.random.exponential(2.5) if congested else np.random.exponential(0.1)
             tx_dropped = np.random.poisson(5) if congested else np.random.poisson(0)
-            latency = np.random.normal(50, 20) if congested else np.random.normal(10, 2)
+            # Control-plane RTT is usually lower than data-plane latency. 
+            # Assumption: Uncongested control plane responds in ~3ms. Under high data-plane congestion, 
+            # switch CPU/buffer pressure increases control-plane RTT to ~15ms.
+            latency = np.random.normal(15, 5) if congested else np.random.normal(3, 1)
             
             rows.append({
                 'experiment_id': exp,
@@ -54,7 +57,7 @@ def generate_mock_experiments():
                 'control_plane_rtt_ms': latency,
                 'rx_bytes_slope': np.random.normal(100, 50),
                 'tx_bytes_rate': np.random.uniform(5000, 15000),
-                'current_sla_violated': 1 if (loss_mean > 2.0 or latency > 40) else 0
+                'current_sla_violated': 1 if (loss_mean > 2.0 or latency > 20.0) else 0
             })
             
     df = pd.DataFrame(rows)
@@ -139,9 +142,9 @@ def run_baselines(X_train, y_train, X_test, y_test):
     print("\nRunning Baselines...")
     results = {}
     
-    # 1. Static Rule (e.g. if latency > 30ms -> alert)
+    # 1. Static Rule (e.g. if latency > 20ms -> alert)
     print("Evaluating Static Threshold Baseline...")
-    static_probs = (X_test['control_plane_rtt_ms'] > 30.0).astype(float).values
+    static_probs = (X_test['control_plane_rtt_ms'] > 20.0).astype(float).values
     results['Static_Threshold'] = evaluate_model("Static_Threshold", y_test, static_probs, threshold=0.5)
     
     # 2. Logistic Regression
