@@ -2,7 +2,7 @@
 import time
 
 
-def start_telemedicine_flow(net, src_name, dst_name, bw="3M"):
+def start_telemedicine_flow(net, src_name, dst_name, bw="3M", duration=60):
     """
     Simulate a telemedicine stream.
     Requires very low loss and latency.
@@ -16,5 +16,5 @@ def start_telemedicine_flow(net, src_name, dst_name, bw="3M"):
     time.sleep(1)
     
     # Send traffic
-    print(f"Starting Critical Telemedicine Flow: {src_name} -> {dst_name} ({bw}bps)")
-    src.cmd(f'iperf -c {dst.IP()} -u -p 5004 -b {bw} -t 60 &')
+    print(f"Starting Critical Telemedicine Flow: {src_name} -> {dst_name} ({bw}bps, {duration}s)")
+    src.cmd(f'iperf -c {dst.IP()} -u -p 5004 -b {bw} -t {duration} &')
