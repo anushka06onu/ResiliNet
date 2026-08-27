@@ -3,6 +3,7 @@ import glob
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import httpx
 
@@ -66,7 +67,9 @@ def run_smoke_test():
             pass
 
         # Verify Artifacts
-        print("-> Verifying artifacts...")
+        print("-> Verifying artifacts strictly...")
+        import os
+        import json
         artifacts = [
             f"{exp_id}_manifest.json",
             f"{exp_id}_telemetry.csv",
@@ -76,16 +79,37 @@ def run_smoke_test():
             f"{exp_id}_scenario.log"
         ]
 
-        missing = []
         for art in artifacts:
-            if not glob.glob(f"experiments/results/{art}"):
-                missing.append(art)
+            path = Path("experiments/results") / art
+            if not path.exists():
+                print(f"-> FAILED: Missing artifact: {art}")
+                sys.exit(1)
+            if path.stat().st_size == 0:
+                print(f"-> FAILED: {art} is empty")
+                sys.exit(1)
 
-        if missing:
-            print(f"-> FAILED: Missing artifacts: {missing}")
+        # Validate manifest
+        manifest_path = Path("experiments/results") / f"{exp_id}_manifest.json"
+        with manifest_path.open("r") as f:
+            manifest = json.load(f)
+        if manifest.get("mode") != "REAL":
+            print(f"-> FAILED: Experiment mode is {manifest.get('mode')}, expected REAL. Mock artifacts are rejected.")
             sys.exit(1)
-        else:
-            print("-> SUCCESS: All artifacts generated!")
+        if manifest.get("status") != "completed":
+            print(f"-> FAILED: Experiment status is {manifest.get('status')}, expected completed.")
+            sys.exit(1)
+
+        # Validate row counts
+        with open(Path("experiments/results") / f"{exp_id}_telemetry.csv") as f:
+            if sum(1 for _ in f) < 3:
+                print("-> FAILED: Telemetry file has insufficient rows.")
+                sys.exit(1)
+        with open(Path("experiments/results") / f"{exp_id}_predictions.csv") as f:
+            if sum(1 for _ in f) < 3:
+                print("-> FAILED: Predictions file has insufficient rows.")
+                sys.exit(1)
+
+        print("-> SUCCESS: All artifacts generated and strictly validated!")
     finally:
         print("-> Shutting down backend server...")
         backend_proc.terminate()
