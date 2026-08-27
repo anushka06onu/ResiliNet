@@ -25,6 +25,8 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r backend/requirements.txt
         pip install -r backend/requirements-dev.txt
+    - name: Check for trailing whitespace
+      run: git diff --check
     - name: Test with pytest
       run: |
         export PYTHONPATH=$PWD

@@ -37,7 +37,7 @@ class FeaturePipeline:
             "metrics": raw_metrics
         }
         history.append(entry)
-        
+
         # Ensure ordering
         history.sort(key=lambda x: x["timestamp"])
 
@@ -50,15 +50,15 @@ class FeaturePipeline:
                 expired_links.append(l_id)
             else:
                 self.link_history[l_id] = pruned
-                
+
         for l_id in expired_links:
             del self.link_history[l_id]
-            
+
         if link_id not in self.link_history:
             return {"status": "INSUFFICIENT_DATA"}
-            
+
         history = self.link_history[link_id]
-        
+
         # Check if we have enough time coverage (at least 80% of window)
         time_coverage = (history[-1]["timestamp"] - history[0]["timestamp"]).total_seconds()
         if time_coverage < (self.window_seconds * 0.8):

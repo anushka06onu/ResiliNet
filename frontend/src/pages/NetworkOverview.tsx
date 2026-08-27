@@ -3,7 +3,7 @@ import { Activity, ShieldCheck, AlertTriangle, Route } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 const NetworkOverview = () => {
-  const { activeConnections, currentTopology, linkStates } = useStore();
+  const { activeConnections, currentTopology, linkStates, latestTelemetry } = useStore();
   
   // Calculate dynamic stats
   const totalLinks = currentTopology?.links?.length || 0;
@@ -19,7 +19,7 @@ const NetworkOverview = () => {
         <h2 className="text-2xl font-bold text-white mb-2">Network Overview</h2>
         <div className="flex gap-4 text-sm items-center">
           <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Topology: <strong className="text-white">sndlib_campus_demo</strong></span>
-          <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Experiment: <strong className="text-white">demo_scenario_001</strong></span>
+          <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Experiment: <strong className="text-white">{latestTelemetry?.experiment_id || "None"}</strong></span>
           <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">Connections: <strong className="text-emerald-400">{activeConnections}</strong></span>
           <div className="bg-amber-900/30 text-amber-400 border border-amber-500/50 px-3 py-1 rounded-md text-xs font-bold tracking-wider uppercase ml-auto">
             ILLUSTRATIVE DEMO SCENARIO

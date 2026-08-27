@@ -17,12 +17,12 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
     const initGraph = async () => {
       try {
         const topoData = await getTopology();
-        
+
         if (!containerRef.current) return;
 
         // Transform data for cytoscape
         const elements: cytoscape.ElementDefinition[] = [];
-        
+
         topoData.nodes.forEach((n: any) => {
           elements.push({
             data: { id: n.id, label: n.id, type: n.type }
@@ -31,9 +31,9 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
 
         topoData.links.forEach((l: any, idx: number) => {
           elements.push({
-            data: { 
-              id: `e${idx}`, 
-              source: l.source, 
+            data: {
+              id: `e${idx}`,
+              source: l.source,
               target: l.target,
               source_port: String(l.source_port),
               target_port: String(l.target_port)
@@ -167,7 +167,7 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
 
   useEffect(() => {
     if (!cyRef.current) return;
-    
+
     cyRef.current.edges().forEach((edge) => {
       const src = edge.data('source');
       const tgt = edge.data('target');
@@ -176,9 +176,9 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
 
       // Look up both directions using the new port mappings
       // e.g. "core1-p1"
-      const state = linkStates[`${src}-p${srcPort}`] || linkStates[`${tgt}-p${tgtPort}`] || 
+      const state = linkStates[`${src}-p${srcPort}`] || linkStates[`${tgt}-p${tgtPort}`] ||
                     linkStates[`${src}-${tgt}`] || linkStates[`${tgt}-${src}`];
-      
+
       if (state && state.predicted_risk !== undefined) {
         let color = '#334155'; // default slate-700
         let width = 2.5;
@@ -196,7 +196,7 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
         if (!edge.selected()) {
           edge.style({ 'line-color': color, 'width': width });
         }
-        
+
         // Add dynamic metrics label
         let labelText = '';
         if (state.metrics) {

@@ -29,7 +29,8 @@ class Orchestrator:
         self.flow_locks = {}
         self.routing_decisions = []
         self.policy = "predictive"
-        
+        self.active_experiment_id = None
+
         # SQLite Persistence
         import sqlite3
         self.db_path = project_root / 'experiments' / 'results' / 'resilinet.db'
@@ -58,10 +59,21 @@ class Orchestrator:
                 )
             ''')
             self.conn.commit()
-        
+
     def set_policy(self, policy: str):
         self.policy = policy
         logging.info(f"Orchestrator policy set to: {self.policy}")
+
+    def begin_experiment(self, experiment_id: str, policy: str):
+        """Set the active context and reset state for a new experiment."""
+        self.active_experiment_id = experiment_id
+        self.set_policy(policy)
+        self.routing_decisions.clear()
+        # Reset flow SLA states
+        for flow in self.flows.values():
+            flow["state"] = "STABLE"
+            flow["sla_status"] = "Healthy"
+        logging.info(f"Orchestrator began experiment: {self.active_experiment_id} with policy {self.policy}")
 
 
     def load_topology(self, topo_data):
@@ -145,10 +157,10 @@ class Orchestrator:
                 if edge_found and target_switch:
                     is_violation_actual = event.get("payload", {}).get("is_violation_actual", False)
                     evaluate = False
-                    
+
                     if self.policy == "predictive" and is_violation or self.policy == "reactive" and is_violation_actual:
                         evaluate = True
-                        
+
                     if evaluate:
                         self._evaluate_affected_flows(switch, target_switch)
 
@@ -166,18 +178,18 @@ class Orchestrator:
                         continue
 
                     path = flow["current_path"]
-                    
+
                     # Check if the specific directed edge is in the path
                     edge_in_path = False
                     for i in range(len(path) - 1):
                         if path[i] == congested_u and path[i+1] == congested_v:
                             edge_in_path = True
                             break
-                            
+
                     if edge_in_path:
                         # Trigger reroute evaluation
                         flow["state"] = "EVALUATING"
-                        
+
                         # Strip host nodes from path for the router
                         switch_path = [n for n in path if "h" not in n]
 
@@ -191,11 +203,11 @@ class Orchestrator:
                             nw_dst = "10.0.0.4" if flow["dst"] == "h4" else "10.0.0.3"
 
                         logging.info(f"Flow {flow_id} crosses congested edge {congested_u}->{congested_v}. Evaluating reroute...")
-                        
+
                         risk_before = self.router.calculate_path_risk(switch_path)
-                        
+
                         flow["state"] = "INSTALLING"
-                        
+
                         result = self.router.evaluate_and_reroute(
                             flow_id=flow_id,
                             source=switch_path[0] if switch_path else path[0],
@@ -207,17 +219,17 @@ class Orchestrator:
                         success = result.success
                         msg = result.message
                         proposed_path = result.proposed_path
-                        
+
                         flow["state"] = "VERIFYING"
-                        
+
                         # Note: In a real async system we'd wait here, but for this mock we assume evaluate_and_reroute does it
-                        
+
                         risk_after = self.router.calculate_path_risk(proposed_path) if success and proposed_path else None
 
                         # Record decision
                         decision = {
                             "decision_id": str(uuid.uuid4()),
-                            "experiment_id": "live_run", # This needs to be pulled from env
+                            "experiment_id": self.active_experiment_id or "unknown",
                             "flow_id": flow_id,
                             "timestamp": datetime.utcnow().isoformat() + "Z",
                             "risk_before": risk_before,
@@ -247,7 +259,7 @@ class Orchestrator:
 
 
                         self.routing_decisions.append(decision)
-                        
+
                         # Persist to SQLite
                         import json
                         try:
@@ -262,7 +274,7 @@ class Orchestrator:
                                 ''', (
                                     decision["decision_id"], decision["experiment_id"], decision["flow_id"],
                                     decision["timestamp"], decision["risk_before"], decision["risk_after"],
-                                    json.dumps(decision["original_path"]), 
+                                    json.dumps(decision["original_path"]),
                                     json.dumps(decision["proposed_path"]) if decision["proposed_path"] else None,
                                     decision["safeguard_result"], decision["installation_status"],
                                     decision["verification_status"], decision["outcome_status"]

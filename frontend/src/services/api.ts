@@ -84,9 +84,20 @@ export const getPredictionAndExplanation = async (
     // Realistic Mock Data for Simulation Mode (DEMO DATA)
     return new Promise((resolve) => {
       setTimeout(() => {
-        // Deterministic mock based on link names to simulate a persistent congested link
-        const isCongested = (switchId === 'dist2' && portNo === '2') || (switchId === 'core1' && portNo === '2');
-        const prob = isCongested ? 0.88 : (Math.random() * 0.15 + 0.05);
+        const cycle = (Date.now() % 80000) / 1000;
+        let prob = 0.1;
+        let loss = 0.1;
+        
+        if (cycle > 60) {
+            prob = 0.2; // Reroute and recovery
+            loss = 0.5;
+        } else if (cycle > 40) {
+            prob = 0.88; // Predicted violation
+            loss = 45.2;
+        } else if (cycle > 20) {
+            prob = 0.45; // Increasing risk
+            loss = 12.5;
+        }
         
         resolve({
           predict: {
@@ -96,10 +107,10 @@ export const getPredictionAndExplanation = async (
           explain: {
             base_value: 0.1,
             features: [
-              { name: 'loss_mean_30s', value: isCongested ? 45.2 : 0.1, shap_contribution: isCongested ? 0.45 : -0.1 },
+              { name: 'loss_mean_30s', value: loss, shap_contribution: prob - 0.1 },
               { name: 'tx_bytes_rate', value: 1048576, shap_contribution: 0.2 },
               { name: 'rx_bytes_slope', value: -500, shap_contribution: -0.05 },
-              { name: 'tx_dropped_max', value: isCongested ? 100 : 0, shap_contribution: isCongested ? 0.15 : -0.02 }
+              { name: 'tx_dropped_max', value: prob > 0.5 ? 100 : 0, shap_contribution: prob > 0.5 ? 0.15 : -0.02 }
             ]
           }
         });

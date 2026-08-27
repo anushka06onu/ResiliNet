@@ -128,7 +128,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
         "source": "mininet_ryu",
         "type": "link_telemetry",
         "timestamp": datetime.utcnow().isoformat() + "Z",
-        "experiment_id": "demo_scenario_001",
+        "experiment_id": orchestrator.active_experiment_id or "unknown",
         "payload": {
             "link_id": link_id,
             "utilization": round(computed_features.get("utilization", 0.0), 4),
@@ -338,7 +338,7 @@ def get_flow_details(flow_id: str):
             "dst": flow["dst"],
             "current_path": flow["current_path"],
             "sla": {"max_latency_ms": 20, "max_loss_percent": 1.0},
-            "metrics": {"latency_ms": 15, "loss_percent": 0.0} # Needs real metrics
+            "metrics": {"latency_ms": None, "loss_percent": None, "status": "unavailable"}
         }
     return {"error": "Flow not found"}
 
@@ -360,22 +360,22 @@ class ExperimentManager:
     def __init__(self):
         self.active_processes = {}
         self.historical_records = {}
-    
+
     def start(self, id: str, config: "ExperimentConfig"):
         if id in self.active_processes and self.active_processes[id].poll() is None:
             return False
-            
+
         experiment_script = Path(project_root) / "experiments" / "run_experiment.py"
         cmd = ["python3", str(experiment_script), "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed), "--experiment-id", id, "--policy", config.policy]
         proc = subprocess.Popen(cmd, cwd=project_root)
         self.active_processes[id] = proc
         self.historical_records[id] = {"status": "STARTING", "proc": proc}
         return True
-        
+
     def stop(self, id: str):
         if id not in self.active_processes:
             return False
-            
+
         proc = self.active_processes[id]
         if proc.poll() is None:
             import signal
@@ -384,11 +384,11 @@ class ExperimentManager:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                
+
         self.historical_records[id]["status"] = "STOPPED"
         del self.active_processes[id]
         return True
-        
+
     def status(self, id: str):
         if id in self.active_processes:
             proc = self.active_processes[id]
@@ -399,10 +399,10 @@ class ExperimentManager:
                 self.historical_records[id]["status"] = "completed" if code == 0 else f"failed (code {code})"
                 del self.active_processes[id]
                 return self.historical_records[id]["status"]
-                
+
         if id in self.historical_records:
             return self.historical_records[id]["status"]
-            
+
         return "unknown"
 
 experiment_manager = ExperimentManager()
@@ -411,7 +411,7 @@ experiment_manager = ExperimentManager()
 def list_experiments():
     import json
     results = []
-    
+
     # Add currently active
     for exp_id, proc in experiment_manager.active_processes.items():
         if proc.poll() is None:
@@ -419,14 +419,14 @@ def list_experiments():
                 "id": exp_id,
                 "status": "running"
             })
-            
+
     # Add finished from results directory
     results_dir = Path(project_root) / "experiments" / "results"
     for manifest_path in results_dir.glob("*_manifest.json"):
         try:
             with manifest_path.open("r", encoding="utf-8") as file:
                 manifest = json.load(file)
-                
+
             results.append({
                 "id": manifest.get("experiment_id"),
                 "status": manifest.get("status", "unknown"),
@@ -435,7 +435,7 @@ def list_experiments():
             })
         except Exception:
             pass
-            
+
     return results
 
 @app.get("/api/v1/experiments/{id}")
@@ -462,23 +462,23 @@ import re
 def start_experiment(id: str, config: ExperimentConfig = None):
     if not re.match(r"^[a-zA-Z0-9_-]+$", id):
         raise HTTPException(status_code=422, detail="Invalid experiment ID")
-        
+
     global telemetry_history, prediction_history
     telemetry_history = []
     prediction_history = []
     orchestrator.routing_decisions = []
     feature_pipeline.link_history.clear()
-    
+
 
     if config is None:
         config = ExperimentConfig()
-        
-    orchestrator.set_policy(config.policy)
-        
+
+    orchestrator.begin_experiment(id, config.policy)
+
     if not experiment_manager.start(id, config):
 
         return {"status": "error", "message": "Experiment already running"}
-        
+
     return {"status": "STARTING", "experiment": id, "scenario": config.scenario}
 
 @app.post("/api/v1/experiments/{id}/pause")
@@ -490,14 +490,14 @@ def pause_experiment(id: str):
 @app.post("/api/v1/experiments/{id}/stop")
 def stop_experiment(id: str):
     experiment_manager.stop(id)
-        
+
     # Dump artifacts
     import os
 
     import pandas as pd
     results_dir = Path(project_root) / 'experiments' / 'results'
     os.makedirs(results_dir, exist_ok=True)
-    
+
     if telemetry_history:
         pd.DataFrame(telemetry_history).to_csv(results_dir / f"{id}_telemetry.csv", index=False)
     if prediction_history:
@@ -506,9 +506,9 @@ def stop_experiment(id: str):
         import json
         with open(results_dir / f"{id}_routing_decisions.jsonl", "w") as f:
             f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
-                
+
     return {"status": "stopped", "experiment": id}
 
 @app.get("/api/v1/replay/{experiment_id}")
 def replay_experiment(experiment_id: str):
-    return {"status": "replaying", "experiment": experiment_id}
+    raise HTTPException(status_code=501, detail="Replay not yet fully implemented")
