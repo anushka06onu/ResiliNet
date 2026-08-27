@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from app.config import sla_config
 from typing import Literal
 
 project_root = Path(__file__).resolve().parents[2]
@@ -45,7 +46,10 @@ app = FastAPI(
 # CORS config
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -89,12 +93,12 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 class TelemetryMetrics(BaseModel):
-    rx_bytes: float = Field(..., allow_inf_nan=False)
-    tx_bytes: float = Field(..., allow_inf_nan=False)
-    control_plane_rtt_ms: float = Field(..., allow_inf_nan=False)
-    tx_dropped: float = Field(..., allow_inf_nan=False)
-    loss_percent: float = Field(..., allow_inf_nan=False)
-    utilization: float = Field(..., allow_inf_nan=False)
+    rx_bytes: float = Field(ge=0, allow_inf_nan=False)
+    tx_bytes: float = Field(ge=0, allow_inf_nan=False)
+    control_plane_rtt_ms: float = Field(ge=0, allow_inf_nan=False)
+    tx_dropped: float = Field(ge=0, allow_inf_nan=False)
+    loss_percent: float = Field(ge=0, le=100, allow_inf_nan=False)
+    utilization: float = Field(ge=0, le=1, allow_inf_nan=False)
 
 class TelemetryPayload(BaseModel):
     switch_id: str
@@ -128,12 +132,12 @@ async def ingest_telemetry(payload: TelemetryPayload):
     # We pass it to the FeaturePipeline
     computed_features = feature_pipeline.process_raw_telemetry(
         link_id=link_id,
-        raw_metrics=payload.features.dict(),
+        raw_metrics=payload.features.model_dump(),
         timestamp=last_telemetry_timestamp
     )
 
     if computed_features.get("status") == "INSUFFICIENT_DATA":
-        latest_features[link_id] = payload.features.dict() # Store raw until warm
+        latest_features[link_id] = payload.features.model_dump() # Store raw until warm
         return {"status": "warming_up", "message": "Gathering more telemetry"}
 
     if computed_features.get("status") == "STALE_DATA":
@@ -149,7 +153,12 @@ async def ingest_telemetry(payload: TelemetryPayload):
     tel_record['link_id'] = link_id
     telemetry_history.append(tel_record)
 
-    is_violation_actual = computed_features.get("control_plane_rtt_ms", 0.0) > 50.0
+    latency_ms = computed_features.get("control_plane_rtt_ms", 0.0)
+    loss_pct = computed_features.get("loss_percent", 0.0)
+    is_violation_actual = (
+        latency_ms > sla_config.max_latency_ms
+        or loss_pct > sla_config.max_loss_percent
+    )
 
     event = {
         "mode": "LIVE LAB",
@@ -231,7 +240,7 @@ from app.services.orchestrator import orchestrator
 @app.post("/api/v1/topology/ingest")
 async def ingest_topology(payload: TopologySchema):
     global active_live_topology
-    active_live_topology = payload.dict()
+    active_live_topology = payload.model_dump()
     orchestrator.load_topology(active_live_topology)
     return {"status": "topology_ingested"}
 
@@ -340,6 +349,8 @@ def get_latest_prediction(link_id: str):
                 "prediction_status": "model_unavailable" if not MODEL_LOADED else "insufficient_data",
                 "error": "model_unavailable" if not MODEL_LOADED else "no_features"
             }
+    except HTTPException:
+        raise
     except Exception as e:
         return {
             "mode": "LIVE LAB",
