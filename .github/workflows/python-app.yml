@@ -27,5 +27,5 @@ jobs:
         pip install -r backend/requirements-dev.txt
     - name: Test with pytest
       run: |
-        cd backend
-        pytest tests/
+        export PYTHONPATH=$PWD
+        pytest backend/tests/
