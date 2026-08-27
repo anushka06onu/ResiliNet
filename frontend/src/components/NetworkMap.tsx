@@ -31,7 +31,13 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
 
         topoData.links.forEach((l: any, idx: number) => {
           elements.push({
-            data: { id: `e${idx}`, source: l.source, target: l.target }
+            data: { 
+              id: `e${idx}`, 
+              source: l.source, 
+              target: l.target,
+              source_port: String(l.source_port),
+              target_port: String(l.target_port)
+            }
           });
         });
 
