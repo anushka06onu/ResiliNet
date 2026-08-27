@@ -628,7 +628,7 @@ def get_experiment(id: str):
 
 
 class ExperimentConfig(BaseModel):
-    scenario: Literal["normal", "gradual_congestion", "sudden_surge"] = "normal"
+    scenario: Literal["normal", "gradual_congestion", "sudden_surge", "concurrent_flows"] = "normal"
     duration: int = Field(60, ge=10, le=3600)
     seed: int = 42
     policy: Literal["static", "reactive", "predictive"] = "predictive"
