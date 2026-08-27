@@ -28,7 +28,7 @@ def get_python_version():
     import sys
     return sys.version
 
-def run_experiment(scenario, duration, seed, experiment_id=None, policy="predictive"):
+def run_experiment(scenario, duration, seed, experiment_id=None, policy="predictive", allow_mock=False):
     if not experiment_id:
         experiment_id = f"{scenario}_seed{seed}"
 
@@ -44,18 +44,27 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
     import shutil
     has_ryu = shutil.which("ryu-manager") is not None
+    mode = "REAL"
 
     if not has_ryu:
-        print("ryu-manager not found. Running in mock environment mode.")
-        # Simulate experiment duration
-        time.sleep(5)
-        # Touch mock artifacts
-        open(results_dir / f"{experiment_id}_telemetry.csv", "w").close()
-        open(results_dir / f"{experiment_id}_predictions.csv", "w").close()
-        open(results_dir / f"{experiment_id}_routing_decisions.jsonl", "w").close()
-        open(results_dir / f"{experiment_id}_controller.log", "w").close()
-        open(results_dir / f"{experiment_id}_scenario.log", "w").close()
-        status = "completed"
+        if not allow_mock:
+            print("ryu-manager not found. Mock mode not explicitly allowed.")
+            status = "environment_unavailable"
+            mode = "REAL"
+        else:
+            print("ryu-manager not found. Running in mock environment mode.")
+            mode = "MOCK_TEST"
+            results_dir = project_root / "experiments" / "results" / "mock"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            # Simulate experiment duration
+            time.sleep(5)
+            # Touch mock artifacts
+            open(results_dir / f"{experiment_id}_telemetry.csv", "w").close()
+            open(results_dir / f"{experiment_id}_predictions.csv", "w").close()
+            open(results_dir / f"{experiment_id}_routing_decisions.jsonl", "w").close()
+            open(results_dir / f"{experiment_id}_controller.log", "w").close()
+            open(results_dir / f"{experiment_id}_scenario.log", "w").close()
+            status = "completed"
     else:
         # 1. Start Ryu controller in background
         print("Starting Ryu controller...")
@@ -149,6 +158,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         "duration": duration,
         "policy": policy,
         "status": status,
+        "mode": mode,
         "metadata": {
             "start_time": start_time,
             "end_time": end_time,
@@ -162,6 +172,9 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         json.dump(manifest, f, indent=2)
 
     print(f"Experiment {experiment_id} finished with status: {status}")
+    if status == "environment_unavailable":
+        import sys
+        sys.exit(1)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run ResiliNet Mininet Experiments")
@@ -170,6 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42, help="Random seed for traffic generation")
     parser.add_argument("--experiment-id", type=str, default=None, help="Experiment ID for tracking")
     parser.add_argument("--policy", type=str, default="predictive", help="Routing policy to use")
+    parser.add_argument("--allow-mock", action="store_true", help="Allow running mock experiment if Ryu/Mininet is unavailable")
 
     args = parser.parse_args()
-    run_experiment(args.scenario, args.duration, args.seed, args.experiment_id, args.policy)
+    run_experiment(args.scenario, args.duration, args.seed, args.experiment_id, args.policy, args.allow_mock)
