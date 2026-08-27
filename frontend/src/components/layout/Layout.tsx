@@ -97,7 +97,7 @@ const Layout = () => {
           }`}
         >
           {dataMode === 'SIMULATION' || dataMode === 'DEMO DATA'
-            ? '⚠️ SIMULATION — NOT LIVE NETWORK DATA'
+            ? '⚠️ SIMULATION DATA — NOT LIVE EXPERIMENTAL EVIDENCE'
             : dataMode === 'STALE'
               ? '⚠️ STALE TELEMETRY — NO RECENT UPDATES'
               : dataMode === 'LIVE' || dataMode === 'LIVE LAB'

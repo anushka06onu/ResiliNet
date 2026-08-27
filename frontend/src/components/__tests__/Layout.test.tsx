@@ -12,7 +12,7 @@ describe('Layout component', () => {
         <Layout />
       </MemoryRouter>,
     );
-    expect(screen.getByText('⚠️ SIMULATION — NOT LIVE NETWORK DATA')).toBeDefined();
+    expect(screen.getByText('⚠️ SIMULATION DATA — NOT LIVE EXPERIMENTAL EVIDENCE')).toBeDefined();
   });
 
   it('renders prominent live lab banner when in LIVE LAB mode', () => {
