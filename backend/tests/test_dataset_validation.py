@@ -105,26 +105,22 @@ def test_validate_telemetry_dataframe_sample_real_run():
 
 
 def test_sample_real_run_manifest_provenance():
-    """Verify artifact relationships and hashes recorded in sample_real_run manifest."""
+    """Verify artifact relationships, checksums, and provenance recorded in sample_real_run."""
     import hashlib
     import json
     from pathlib import Path
 
     project_root = Path(__file__).resolve().parents[2]
-    manifest_path = project_root / "experiments" / "sample_real_run" / "manifest.json"
+    sample_dir = project_root / "experiments" / "sample_real_run"
+    manifest_path = sample_dir / "manifest.json"
+    sums_path = sample_dir / "SHA256SUMS"
     meta_path = project_root / "ml" / "artifacts" / "model_metadata.json"
     model_path = project_root / "ml" / "artifacts" / "lightgbm_model.txt"
     scenario_path = project_root / "experiments" / "scenarios" / "gradual_congestion.py"
     topology_path = project_root / "network" / "topologies" / "campus_health.py"
 
-    if not manifest_path.exists():
-        pytest.skip("Manifest not present")
-
-    with open(manifest_path, "r") as f:
-        manifest = json.load(f)
-
-    with open(meta_path, "r") as f:
-        meta = json.load(f)
+    assert manifest_path.exists(), "Sample real run manifest.json must be present"
+    assert sums_path.exists(), "Sample real run SHA256SUMS must be present"
 
     def sha256(p):
         h = hashlib.sha256()
@@ -133,8 +129,42 @@ def test_sample_real_run_manifest_provenance():
                 h.update(chunk)
         return h.hexdigest()
 
+    # 1. Verify every artifact in SHA256SUMS exists, is non-empty, and has matching digest
+    with open(sums_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            expected_hash, fname = line.split(maxsplit=1)
+            target = sample_dir / fname.strip()
+            assert target.exists(), f"Artifact {fname} from SHA256SUMS missing"
+            assert target.stat().st_size > 0, f"Artifact {fname} is unexpectedly empty"
+            assert sha256(target) == expected_hash, f"Hash mismatch for {fname}"
+
+    # 2. Verify manifest metadata
+    with open(manifest_path, "r") as f:
+        manifest = json.load(f)
+
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
     hashes = manifest.get("artifact_hashes", {})
     assert hashes.get("model_run_id") == meta.get("run_id")
     assert hashes.get("model_file_sha256") == sha256(model_path)
     assert hashes.get("scenario_file_sha256") == sha256(scenario_path)
     assert hashes.get("topology_file_sha256") == sha256(topology_path)
+
+    # 3. Verify scientific evidence boundaries and environment
+    assert manifest.get("evidence_scope") == "pipeline_execution_demonstration"
+    assert manifest.get("predictive_performance_validated") is False
+    assert manifest.get("data_origin") == "mininet"
+    assert manifest.get("status") == "completed"
+
+    env = manifest.get("environment", {})
+    assert len(env.get("git_commit", "")) >= 7
+    assert env.get("mininet_version") is not None
+    assert env.get("ryu_version") is not None
+
+    procs = manifest.get("process_results", {})
+    for proc_name, exit_code in procs.items():
+        assert exit_code == 0, f"Process {proc_name} returned non-zero exit code {exit_code}"

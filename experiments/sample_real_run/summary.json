@@ -11,6 +11,9 @@
     "mean_flow_latency_ms": 11.47,
     "mean_loss_ratio": 0.0033,
     "reroute_decisions_count": 1,
-    "successful_reroutes_count": 1
+    "successful_reroutes_count": 1,
+    "new_path_packet_delta": 530,
+    "new_path_byte_delta": 795000,
+    "old_path_packet_delta": 0
   }
 }
