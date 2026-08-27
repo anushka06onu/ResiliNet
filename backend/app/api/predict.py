@@ -7,33 +7,50 @@ import os
 # Add root to sys.path to import ml module
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
+import numpy as np
+import pandas as pd
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+MODEL_PATH = ROOT / "ml" / "artifacts" / "lightgbm_model.txt"
+EVAL_PATH = ROOT / "ml" / "artifacts" / "evaluation_report.json"
+DECISION_THRESHOLD = 0.5
+MODEL_LOADED = False
+EXPLAINER_LOADED = False
+
+model = None
+explainer = None
+
+# 1. Attempt to load the LightGBM model for pure inference
 try:
-    from ml.explain import ResiliNetExplainer
-    import numpy as np
-    import pandas as pd
-    import json
-    from pathlib import Path
-    
-    ROOT = Path(__file__).resolve().parents[3]
-    MODEL_PATH = ROOT / "ml" / "artifacts" / "lightgbm_model.txt"
-    EVAL_PATH = ROOT / "ml" / "artifacts" / "evaluation_report.json"
-    
-    explainer = ResiliNetExplainer(model_path=str(MODEL_PATH))
-    MODEL_LOADED = True
-    
-    DECISION_THRESHOLD = 0.5
-    try:
-        with open(EVAL_PATH, "r") as f:
-            eval_data = json.load(f)
-            DECISION_THRESHOLD = eval_data.get("evaluation_metadata", {}).get("lgbm_optimal_threshold", 0.5)
-    except Exception:
-        pass
-        
+    import lightgbm as lgb
     from ml.schema import MODEL_FEATURES
+    
+    if MODEL_PATH.exists():
+        model = lgb.Booster(model_file=str(MODEL_PATH))
+        MODEL_LOADED = True
+        
+        try:
+            with open(EVAL_PATH, "r") as f:
+                eval_data = json.load(f)
+                DECISION_THRESHOLD = eval_data.get("evaluation_metadata", {}).get("lgbm_optimal_threshold", 0.5)
+        except Exception:
+            pass
+            
+    else:
+        print(f"Warning: Model file not found at {MODEL_PATH}")
 except Exception as e:
-    print(f"Warning: Failed to load ML Explainer: {e}")
-    MODEL_LOADED = False
-    DECISION_THRESHOLD = 0.5
+    print(f"Warning: Failed to load LightGBM model: {e}")
+
+# 2. Attempt to load the Explainer (optional)
+if MODEL_LOADED:
+    try:
+        from ml.explain import ResiliNetExplainer
+        explainer = ResiliNetExplainer(model_path=str(MODEL_PATH))
+        EXPLAINER_LOADED = True
+    except Exception as e:
+        print(f"Warning: Failed to load ML Explainer (SHAP unavailable): {e}")
 
 router = APIRouter()
 
@@ -52,7 +69,7 @@ async def predict_congestion(data: FeatureVector):
         df = pd.DataFrame([data.features], columns=MODEL_FEATURES).apply(pd.to_numeric, errors="coerce")
         
         # Predict probability
-        prob = explainer.model.predict(df)[0]
+        prob = model.predict(df)[0]
         
         return {
             "switch_id": data.switch_id,
@@ -62,15 +79,15 @@ async def predict_congestion(data: FeatureVector):
             "threshold_used": DECISION_THRESHOLD
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/explain")
 async def explain_prediction(data: FeatureVector):
-    if not MODEL_LOADED:
-        raise HTTPException(status_code=503, detail="ML Model not loaded")
+    if not EXPLAINER_LOADED:
+        raise HTTPException(status_code=503, detail="ML Explainer (SHAP) unavailable")
         
     try:
-        df = pd.DataFrame([data.features])
+        df = pd.DataFrame([data.features], columns=MODEL_FEATURES).apply(pd.to_numeric, errors="coerce")
         explanation = explainer.get_local_explanation(df)
         
         return {
@@ -80,4 +97,4 @@ async def explain_prediction(data: FeatureVector):
             "features": explanation.get('features', [])
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
