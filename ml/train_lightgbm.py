@@ -55,7 +55,7 @@ def get_git_info() -> tuple[str, bool]:
 
     try:
         status = subprocess.check_output(
-            ["git", "status", "--porcelain"], text=True
+            ["git", "status", "--porcelain", "-uno", "ml/train_lightgbm.py", "data_pipeline/feature_engineering.py", "data_pipeline/validate_dataset.py", "ml/schema.py"], text=True
         ).strip()
         dirty = bool(status)
     except Exception:
