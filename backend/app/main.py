@@ -111,11 +111,14 @@ async def ingest_telemetry(payload: TelemetryPayload):
     # Store globally so frontend can poll it
     latest_features[link_id] = computed_features
 
+
     # Append to telemetry history
     tel_record = computed_features.copy()
     tel_record['timestamp'] = last_telemetry_timestamp.isoformat() + "Z"
     tel_record['link_id'] = link_id
     telemetry_history.append(tel_record)
+
+    is_violation_actual = computed_features.get("control_plane_rtt_ms", 0.0) > 50.0
 
     event = {
         "mode": "LIVE LAB",
@@ -129,9 +132,11 @@ async def ingest_telemetry(payload: TelemetryPayload):
             "latency_ms": computed_features.get("control_plane_rtt_ms"),
             "loss_rate": computed_features.get("loss_mean_30s", 0.0),
             "predicted_risk": None,
-            "prediction_status": "unavailable"
+            "prediction_status": "unavailable",
+            "is_violation_actual": is_violation_actual
         }
     }
+
 
     # Attempt prediction
     try:
@@ -392,10 +397,13 @@ experiment_manager = ExperimentManager()
 def get_experiment(id: str):
     return {"id": id, "status": experiment_manager.status(id)}
 
+
 class ExperimentConfig(BaseModel):
     scenario: str = "normal"
     duration: int = 60
     seed: int = 42
+    policy: str = "predictive"
+
 
 telemetry_history = []
 prediction_history = []
@@ -407,10 +415,14 @@ def start_experiment(id: str, config: ExperimentConfig = None):
     prediction_history = []
     orchestrator.routing_decisions = []
     
+
     if config is None:
         config = ExperimentConfig()
         
+    orchestrator.set_policy(config.policy)
+        
     if not experiment_manager.start(id, config):
+
         return {"status": "error", "message": "Experiment already running"}
         
     return {"status": "started", "experiment": id, "scenario": config.scenario}

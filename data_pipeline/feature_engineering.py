@@ -28,6 +28,7 @@ class FeaturePipeline:
 
         history = self.link_history[link_id]
 
+
         # Append new raw metrics
         entry = {
             "timestamp": timestamp,
@@ -35,12 +36,26 @@ class FeaturePipeline:
         }
         history.append(entry)
 
-        # Trim history by time window
+        # Global Trim: Trim history for ALL links by time window
         cutoff_time = timestamp - timedelta(seconds=self.window_seconds)
-        self.link_history[link_id] = [h for h in history if h["timestamp"] >= cutoff_time]
+        expired_links = []
+        for l_id, l_hist in self.link_history.items():
+            pruned = [h for h in l_hist if h["timestamp"] >= cutoff_time]
+            if len(pruned) == 0:
+                expired_links.append(l_id)
+            else:
+                self.link_history[l_id] = pruned
+                
+        for l_id in expired_links:
+            del self.link_history[l_id]
+            
+        if link_id not in self.link_history:
+            return {"status": "INSUFFICIENT_DATA"}
+            
         history = self.link_history[link_id]
 
         # Calculate features over the window
+
         return self._compute_features(history)
 
     def _compute_features(self, history):
