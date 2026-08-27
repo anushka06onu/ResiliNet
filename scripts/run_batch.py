@@ -36,8 +36,9 @@ def run_experiment(policy, scenario, seed):
             else:
                 print("   Failed to poll status")
                 break
-        except requests.exceptions.RequestException:
-            pass
+        except requests.exceptions.RequestException as e:
+            print(f"   Polling request error: {e}")
+            break
 
     print(f"   Stopping {exp_id} to flush artifacts...")
     requests.post(f"{API_URL}/{exp_id}/stop")

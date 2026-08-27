@@ -19,11 +19,13 @@ const ExperimentControl = () => {
     if (typeof getScenarios === 'function') {
       const res = getScenarios();
       if (res && typeof res.then === 'function') {
-        res.then((scenarios) => {
-          if (scenarios && scenarios.length > 0) {
-            setAvailableScenarios(scenarios);
-          }
-        }).catch(() => {});
+        res
+          .then((scenarios) => {
+            if (scenarios && scenarios.length > 0) {
+              setAvailableScenarios(scenarios);
+            }
+          })
+          .catch(() => {});
       }
     }
 

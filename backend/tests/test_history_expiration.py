@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from data_pipeline.feature_engineering import FeaturePipeline
@@ -8,8 +8,8 @@ from data_pipeline.feature_engineering import FeaturePipeline
 
 def test_history_expiration():
     pipeline = FeaturePipeline(window_seconds=30.0)
-    
-    now = datetime.utcnow()
+
+    now = datetime.now(timezone.utc)
     past = now - timedelta(seconds=40)
     
     # Process old telemetry for link1

@@ -115,8 +115,8 @@ class ResiliNetRyuController(app_manager.RyuApp):
             timestamp = float(ev.msg.data.decode('utf-8'))
             rtt_ms = (time.time() - timestamp) * 1000
             self.latency_stats[ev.msg.datapath.id] = rtt_ms
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug(f"Failed to parse echo reply timestamp: {e}")
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def _port_stats_reply_handler(self, ev):

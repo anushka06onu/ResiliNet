@@ -28,7 +28,7 @@ def test_telemetry_ingest_and_features():
 def test_predict_endpoint():
     payload = {
         "switch_id": "s1",
-        "port_no": "1",
+        "port_no": 1,
         "features": {
             "loss_mean_30s": 0.1,
             "tx_dropped_max": 0,

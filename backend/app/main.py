@@ -48,18 +48,18 @@ async def lifespan(app: FastAPI):
     for ws in list(manager.active_connections):
         try:
             await ws.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug(f"Error closing websocket during shutdown: {e}")
     manager.active_connections.clear()
     for exp_id in list(experiment_manager.active_processes.keys()):
         try:
             experiment_manager.stop(exp_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Error stopping experiment {exp_id} during shutdown: {e}")
     try:
         db_manager.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Error closing database during shutdown: {e}")
 
 app = FastAPI(
     title="ResiliNet API",

@@ -50,8 +50,9 @@ try:
                 with open(EVAL_PATH, "r") as f:
                     eval_data = json.load(f)
                     DECISION_THRESHOLD = eval_data.get("evaluation_metadata", {}).get("lgbm_optimal_threshold", 0.5)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to read threshold from evaluation report: {e}")
     else:
         print(f"Warning: Model file not found at {MODEL_PATH}")
 except Exception as e:
@@ -67,11 +68,13 @@ if MODEL_LOADED:
     except Exception as e:
         print(f"Warning: Failed to load ML Explainer (SHAP unavailable): {e}")
 
+from pydantic import BaseModel, Field
+
 router = APIRouter()
 
 class FeatureVector(BaseModel):
     switch_id: str
-    port_no: str
+    port_no: int = Field(ge=1)
     features: dict[str, float]
 
 @router.post("/predict")

@@ -63,8 +63,8 @@ def run_smoke_test():
         print("-> Stopping experiment to flush artifacts...")
         try:
             httpx.post(f"{API_URL}/{exp_id}/stop", timeout=5)
-        except httpx.RequestError:
-            pass
+        except httpx.RequestError as e:
+            print(f"-> Warning: Stop endpoint request failed: {e}")
 
         # Verify Artifacts
         print("-> Verifying artifacts strictly...")

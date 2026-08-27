@@ -61,16 +61,20 @@ def validate_raw_telemetry(df: pd.DataFrame) -> Tuple[bool, List[str]]:
         if not ts.is_monotonic_increasing:
             violations.append(f"Timestamps are not strictly non-decreasing in group: {group_label}")
 
-        # 3. Monotonic byte counters (unless reset event marked)
-        if "counter_reset" not in group.columns:
-            rx_diff = group["rx_bytes"].diff().dropna()
-            tx_diff = group["tx_bytes"].diff().dropna()
-            if (rx_diff < 0).any():
-                neg_rx = (rx_diff < 0).sum()
-                violations.append(f"Decreasing rx_bytes ({neg_rx} instances without reset marker) in group: {group_label}")
-            if (tx_diff < 0).any():
-                neg_tx = (tx_diff < 0).sum()
-                violations.append(f"Decreasing tx_bytes ({neg_tx} instances without reset marker) in group: {group_label}")
+        # 3. Monotonic byte counters (unless reset event explicitly marked on that row)
+        reset = group["counter_reset"].fillna(False).astype(bool) if "counter_reset" in group.columns else pd.Series(False, index=group.index)
+        rx_diff = group["rx_bytes"].diff()
+        tx_diff = group["tx_bytes"].diff()
+
+        invalid_rx = (rx_diff < 0) & ~reset
+        invalid_tx = (tx_diff < 0) & ~reset
+
+        if invalid_rx.dropna().any():
+            neg_rx = invalid_rx.sum()
+            violations.append(f"Decreasing rx_bytes ({neg_rx} instances without reset marker) in group: {group_label}")
+        if invalid_tx.dropna().any():
+            neg_tx = invalid_tx.sum()
+            violations.append(f"Decreasing tx_bytes ({neg_tx} instances without reset marker) in group: {group_label}")
 
         # 4. Non-negative drop counts
         if "tx_dropped" in group.columns:

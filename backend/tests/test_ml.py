@@ -57,3 +57,39 @@ def test_model_metadata_validation():
     assert meta.feature_schema_version == CURRENT_FEATURE_SCHEMA_VERSION
     assert meta.decision_threshold > 0.0
     assert len(meta.feature_names) == 5
+
+
+def test_synthetic_raw_counters_monotonic():
+    """Verify that synthetic telemetry generation maintains monotonic cumulative counters."""
+    import numpy as np
+    from datetime import datetime, timedelta, timezone
+
+    base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rx_bytes_counter = 0
+    tx_bytes_counter = 0
+    tx_dropped_counter = 0
+
+    records = []
+    for t in range(50):
+        congested = (t >= 25)
+        loss_percent = np.random.exponential(2.5) if congested else np.random.exponential(0.1)
+        tx_dropped_counter += int(np.random.poisson(5) if congested else 0)
+        latency = max(0.5, np.random.normal(15, 5) if congested else np.random.normal(3, 1))
+        utilization = np.random.uniform(0.8, 1.0) if congested else np.random.uniform(0.1, 0.4)
+        rx_bytes_counter += max(10, int(np.random.normal(100, 30)))
+        tx_bytes_counter += max(500, int(np.random.uniform(5000, 15000)) * 2)
+
+        records.append({
+            "timestamp": base_time + timedelta(seconds=t * 2),
+            "rx_bytes": rx_bytes_counter,
+            "tx_bytes": tx_bytes_counter,
+            "tx_dropped": tx_dropped_counter,
+            "loss_percent": loss_percent,
+            "control_plane_rtt_ms": latency,
+            "utilization": utilization
+        })
+
+    df = pd.DataFrame(records)
+    assert df["tx_dropped"].is_monotonic_increasing
+    assert df["rx_bytes"].is_monotonic_increasing
+    assert df["tx_bytes"].is_monotonic_increasing

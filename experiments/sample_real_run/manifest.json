@@ -13,5 +13,24 @@
   "end_time": "2026-08-27T12:01:05Z",
   "topology": "sndlib_campus",
   "nodes_count": 14,
-  "links_count": 21
+  "links_count": 21,
+  "environment": {
+    "git_commit": "a7eb5963b51608933b8a1c865fa50f83dd717a6a",
+    "python_version": "3.10.0",
+    "mininet_version": "2.3.0",
+    "openflow_version": "1.3",
+    "ovs_version": "2.17.0",
+    "ryu_version": "4.34"
+  },
+  "artifact_hashes": {
+    "model_file_sha256": "e5dabeb49cada7f1e8d936d19042d56869bb710ce7feefdabd4b3c344d3f6940",
+    "model_run_id": "run_20260827_160256_1f3da3",
+    "scenario_file_sha256": "4182bc5345f419cfbb1442732759e1b2961c669863558f94d4fe7ecfe9066366",
+    "topology_file_sha256": "1fa15aa0bc01270d5d6773ebae4a909c8dc6c09ba6422a30d430d6294bc6f96e"
+  },
+  "process_results": {
+    "ryu_controller_exit_code": 0,
+    "mininet_scenario_exit_code": 0,
+    "traffic_generator_exit_code": 0
+  }
 }
