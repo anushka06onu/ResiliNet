@@ -117,28 +117,32 @@ ResiliNet/
 |   |   |-- services/        # Orchestrator and experiment lifecycle manager
 |   |   |-- config.py        # Centralized SLA policy and thresholds
 |   |   `-- main.py          # FastAPI application, streams, health checks
-|   `-- tests/               # Backend Pytest test suite (17 passing tests)
+|   `-- tests/               # Backend Pytest test suite (34 passing tests)
 |-- data_pipeline/
 |   |-- collectors/          # OVS and Ryu telemetry collectors
 |   |-- feature_engineering.py# Temporal feature pipeline with quality metadata
-|   `-- label_generation.py  # Version-stable transform future label computation
+|   |-- label_generation.py  # Version-stable transform future label computation
+|   `-- validate_dataset.py  # Physical telemetry and dataset quality validator
 |-- experiments/
 |   |-- sample_real_run/     # Curated reproducible real Mininet experiment run
 |   |-- run_experiment.py    # Experiment runner with explicit opt-in mock mode
-|   `-- scenarios/           # Congestion and burst traffic profiles
+|   `-- scenarios/           # Congestion, surge, and multi-flow traffic profiles
 |-- frontend/
 |   |-- src/
 |   |   |-- components/      # NetworkMap, InsightsPanel, Layout, Modals
 |   |   |-- pages/           # Digital Twin, Flow Monitor, Intelligence, etc.
 |   |   |-- services/        # API service with explicit disconnected status
 |   |   `-- store/           # Zustand global state with telemetry aging
-|   `-- src/**/__tests__/    # Frontend Vitest test suites (6 suites / 10 tests)
+|   `-- src/**/__tests__/    # Frontend Vitest test suites (7 suites / 11 tests)
 |-- ml/
 |   |-- artifacts/           # Saved LightGBM model, SHA-256 metadata, eval reports
 |   |-- schema.py            # ModelMetadata schema and feature definitions
 |   `-- train_lightgbm.py    # Unified training & evaluation pipeline
 |-- network/
-|   `-- routing/             # Predictive router, path calculation & verification
+|   |-- controller/          # Ryu SDN controller applications
+|   |-- routing/             # Predictive router, path calculation & verification
+|   |-- topologies/          # Network topologies (SNDlib, campus, testbed)
+|   `-- traffic/             # Configurable traffic generators (critical, video, bulk)
 |-- scripts/
 |   `-- smoke_test.py        # Strict end-to-end smoke test validator
 |-- LICENSE                  # MIT License
