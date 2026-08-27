@@ -5,9 +5,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Literal
 
 project_root = Path(__file__).resolve().parents[2]
 
@@ -358,15 +359,17 @@ import subprocess
 class ExperimentManager:
     def __init__(self):
         self.active_processes = {}
+        self.historical_records = {}
     
     def start(self, id: str, config: "ExperimentConfig"):
         if id in self.active_processes and self.active_processes[id].poll() is None:
             return False
             
         experiment_script = Path(project_root) / "experiments" / "run_experiment.py"
-        cmd = ["python3", str(experiment_script), "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed), "--experiment-id", id]
+        cmd = ["python3", str(experiment_script), "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed), "--experiment-id", id, "--policy", config.policy]
         proc = subprocess.Popen(cmd, cwd=project_root)
         self.active_processes[id] = proc
+        self.historical_records[id] = {"status": "STARTING", "proc": proc}
         return True
         
     def stop(self, id: str):
@@ -382,12 +385,25 @@ class ExperimentManager:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 
+        self.historical_records[id]["status"] = "STOPPED"
+        del self.active_processes[id]
         return True
         
     def status(self, id: str):
-        if id in self.active_processes and self.active_processes[id].poll() is None:
-            return "running"
-        return "completed"
+        if id in self.active_processes:
+            proc = self.active_processes[id]
+            if proc.poll() is None:
+                return "running"
+            else:
+                code = proc.returncode
+                self.historical_records[id]["status"] = "completed" if code == 0 else f"failed (code {code})"
+                del self.active_processes[id]
+                return self.historical_records[id]["status"]
+                
+        if id in self.historical_records:
+            return self.historical_records[id]["status"]
+            
+        return "unknown"
 
 experiment_manager = ExperimentManager()
 
@@ -424,21 +440,29 @@ def list_experiments():
 
 @app.get("/api/v1/experiments/{id}")
 def get_experiment(id: str):
-    return {"id": id, "status": experiment_manager.status(id)}
+    status = experiment_manager.status(id)
+    if status == "unknown":
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    return {"id": id, "status": status}
 
 
 class ExperimentConfig(BaseModel):
-    scenario: str = "normal"
-    duration: int = 60
+    scenario: Literal["normal", "gradual_congestion", "sudden_surge"] = "normal"
+    duration: int = Field(60, ge=10, le=3600)
     seed: int = 42
-    policy: str = "predictive"
+    policy: Literal["static", "reactive", "predictive"] = "predictive"
 
 
 telemetry_history = []
 prediction_history = []
 
+import re
+
 @app.post("/api/v1/experiments/{id}/start")
 def start_experiment(id: str, config: ExperimentConfig = None):
+    if not re.match(r"^[a-zA-Z0-9_-]+$", id):
+        raise HTTPException(status_code=422, detail="Invalid experiment ID")
+        
     global telemetry_history, prediction_history
     telemetry_history = []
     prediction_history = []
@@ -454,7 +478,7 @@ def start_experiment(id: str, config: ExperimentConfig = None):
 
         return {"status": "error", "message": "Experiment already running"}
         
-    return {"status": "started", "experiment": id, "scenario": config.scenario}
+    return {"status": "STARTING", "experiment": id, "scenario": config.scenario}
 
 @app.post("/api/v1/experiments/{id}/pause")
 def pause_experiment(id: str):
