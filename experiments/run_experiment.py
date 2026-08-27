@@ -8,20 +8,26 @@ import os
 import signal
 from datetime import datetime
 
+from pathlib import Path
+
 def run_experiment(scenario, duration, seed):
     print(f"Starting Mininet experiment: {scenario} (Seed: {seed})")
     
+    # Resolve absolute paths based on this script's location
+    project_root = Path(__file__).resolve().parents[1]
+    
     # 1. Start Ryu controller in background
     print("Starting Ryu controller...")
-    ryu_cmd = ["ryu-manager", "network/controller/resilinet_ryu.py"]
+    ryu_script = project_root / "network" / "controller" / "resilinet_ryu.py"
+    ryu_cmd = ["ryu-manager", str(ryu_script)]
     ryu_proc = subprocess.Popen(ryu_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3) # Wait for Ryu to start
     
     # 2. Run the Mininet scenario script
     print(f"Running Mininet script for {scenario}...")
-    scenario_path = f"experiments/scenarios/{scenario}.py"
+    scenario_path = project_root / "experiments" / "scenarios" / f"{scenario}.py"
     
-    if not os.path.exists(scenario_path):
+    if not scenario_path.exists():
         print(f"Scenario {scenario_path} not found.")
         ryu_proc.terminate()
         return
@@ -47,7 +53,10 @@ def run_experiment(scenario, duration, seed):
     ryu_proc.wait()
     
     # Save manifest
-    os.makedirs('experiments/results', exist_ok=True)
+    # Save manifest
+    results_dir = project_root / "experiments" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
     manifest = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "scenario": scenario,
@@ -56,7 +65,7 @@ def run_experiment(scenario, duration, seed):
         "status": "completed"
     }
     
-    with open(f"experiments/results/{scenario}_seed{seed}.json", "w") as f:
+    with open(results_dir / f"{scenario}_seed{seed}.json", "w") as f:
         json.dump(manifest, f, indent=2)
         
     print(f"Experiment {scenario} (Seed {seed}) finished successfully.")
