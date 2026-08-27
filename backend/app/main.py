@@ -88,10 +88,18 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+class TelemetryMetrics(BaseModel):
+    rx_bytes: float = Field(..., allow_inf_nan=False)
+    tx_bytes: float = Field(..., allow_inf_nan=False)
+    control_plane_rtt_ms: float = Field(..., allow_inf_nan=False)
+    tx_dropped: float = Field(..., allow_inf_nan=False)
+    loss_percent: float = Field(..., allow_inf_nan=False)
+    utilization: float = Field(..., allow_inf_nan=False)
+
 class TelemetryPayload(BaseModel):
     switch_id: str
     port_no: str
-    features: dict
+    features: TelemetryMetrics
 
 latest_features = {}
 last_telemetry_timestamp = None
@@ -120,13 +128,16 @@ async def ingest_telemetry(payload: TelemetryPayload):
     # We pass it to the FeaturePipeline
     computed_features = feature_pipeline.process_raw_telemetry(
         link_id=link_id,
-        raw_metrics=payload.features,
+        raw_metrics=payload.features.dict(),
         timestamp=last_telemetry_timestamp
     )
 
     if computed_features.get("status") == "INSUFFICIENT_DATA":
-        latest_features[link_id] = payload.features # Store raw until warm
+        latest_features[link_id] = payload.features.dict() # Store raw until warm
         return {"status": "warming_up", "message": "Gathering more telemetry"}
+        
+    if computed_features.get("status") == "STALE_DATA":
+        return {"status": "dropped", "message": "Stale metric"}
 
     # Store globally so frontend can poll it
     latest_features[link_id] = computed_features

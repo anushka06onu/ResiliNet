@@ -31,15 +31,16 @@ class FeaturePipeline:
         history = self.link_history[link_id]
 
 
+        # Enforce out-of-order sample policy
+        if history and timestamp <= history[-1]["timestamp"]:
+            return {"status": "STALE_DATA", "message": "Out of order metric dropped"}
+
         # Append new raw metrics
         entry = {
             "timestamp": timestamp,
             "metrics": raw_metrics
         }
         history.append(entry)
-
-        # Ensure ordering
-        history.sort(key=lambda x: x["timestamp"])
 
         # Global Trim: Trim history for ALL links by time window
         cutoff_time = timestamp - timedelta(seconds=self.window_seconds)
