@@ -97,54 +97,78 @@ class Orchestrator:
 
                 # Update risk on the specific edge
                 edge_found = False
+                target_switch = None
                 for u, v, data in self.router.graph.edges(data=True):
                     if u == switch and data.get("out_port") == port:
                         # update_link_predictions expects a list of dicts
                         self.router.update_link_predictions([{'source': u, 'target': v, 'congestion_prob': risk}])
                         edge_found = True
+                        target_switch = v
 
-                if edge_found and is_violation:
-                    self._evaluate_affected_flows(switch)
+                if edge_found and is_violation and target_switch:
+                    self._evaluate_affected_flows(switch, target_switch)
             except Exception as e:
                 logging.error(f"Orchestrator failed to process telemetry for {link_id}: {e}")
 
-    def _evaluate_affected_flows(self, congested_switch):
-        """Find flows crossing the congested switch and attempt to reroute them."""
+    def _evaluate_affected_flows(self, congested_u, congested_v):
+        """Find flows crossing the congested directed edge and attempt to reroute them."""
         for flow_id, flow in self.flows.items():
             # Attempt to acquire lock without blocking so we don't hold up other evaluations
             lock = self.flow_locks.get(flow_id)
             if lock and lock.acquire(blocking=False):
                 try:
-                    if flow["state"] != "STABLE":
+                    if flow["state"] not in ["STABLE", "DEGRADED"]:
                         continue
 
                     path = flow["current_path"]
-                    if congested_switch in path:
+                    
+                    # Check if the specific directed edge is in the path
+                    edge_in_path = False
+                    for i in range(len(path) - 1):
+                        if path[i] == congested_u and path[i+1] == congested_v:
+                            edge_in_path = True
+                            break
+                            
+                    if edge_in_path:
                         # Trigger reroute evaluation
                         flow["state"] = "EVALUATING"
+                        
+                        # Strip host nodes from path for the router
+                        switch_path = [n for n in path if "h" not in n]
 
                         # Mock IPs (in a real system, these would be in the flow registry)
                         nw_src = "10.0.0.1" if flow["src"] == "h1" else "10.0.0.2"
                         nw_dst = "10.0.0.4" if flow["dst"] == "h4" else "10.0.0.3"
 
-                        logging.info(f"Flow {flow_id} crosses congested switch {congested_switch}. Evaluating reroute...")
+                        logging.info(f"Flow {flow_id} crosses congested edge {congested_u}->{congested_v}. Evaluating reroute...")
+                        
+                        risk_before = self.router.calculate_path_risk(switch_path)
+                        
+                        flow["state"] = "INSTALLING"
+                        
                         success, msg, proposed_path = self.router.evaluate_and_reroute(
                             flow_id=flow_id,
-                            source=path[0],
-                            target=path[-1],
-                            current_path=path,
+                            source=switch_path[0] if switch_path else path[0],
+                            target=switch_path[-1] if switch_path else path[-1],
+                            current_path=switch_path,
                             nw_src=nw_src,
                             nw_dst=nw_dst
                         )
+                        
+                        flow["state"] = "VERIFYING"
+                        
+                        # Note: In a real async system we'd wait here, but for this mock we assume evaluate_and_reroute does it
+                        
+                        risk_after = self.router.calculate_path_risk(proposed_path) if success and proposed_path else None
 
                         # Record decision
                         decision = {
                             "decision_id": str(uuid.uuid4()),
-                            "experiment_id": "live_run",
+                            "experiment_id": "live_run", # This needs to be pulled from env
                             "flow_id": flow_id,
                             "timestamp": datetime.utcnow().isoformat() + "Z",
-                            "risk_before": None, # Could extract from router
-                            "risk_after": None,
+                            "risk_before": risk_before,
+                            "risk_after": risk_after,
                             "original_path": path,
                             "proposed_path": proposed_path if success else None,
                             "safeguard_result": msg,
@@ -155,11 +179,19 @@ class Orchestrator:
 
                         if success:
                             flow["sla_status"] = "Rerouted"
-                            flow["current_path"] = proposed_path
+                            # Re-attach hosts for tracking if they were there
+                            new_full_path = proposed_path.copy()
+                            if path[0].startswith("h"): new_full_path.insert(0, path[0])
+                            if path[-1].startswith("h"): new_full_path.append(path[-1])
+                            flow["current_path"] = new_full_path
+                            flow["state"] = "STABLE"
                         else:
+                            if "verification" in msg.lower() or "rollback" in msg.lower():
+                                flow["state"] = "ROLLBACK_COMPLETE" # or ROLLBACK_FAILED if we had that info
+                            else:
+                                flow["state"] = "DEGRADED"
                             flow["sla_status"] = "Violated"
 
-                        flow["state"] = "STABLE"
                         self.routing_decisions.append(decision)
                 finally:
                     lock.release()
