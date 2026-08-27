@@ -4,11 +4,22 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api
 export let isSimulationMode = false;
 
 export interface ExperimentConfig {
-  scenario: 'normal' | 'gradual_congestion' | 'sudden_surge';
+  scenario: 'normal' | 'gradual_congestion' | 'sudden_surge' | 'concurrent_flows';
   duration: number;
   seed: number;
   policy: 'static' | 'reactive' | 'predictive';
 }
+
+export const getScenarios = async (): Promise<string[]> => {
+  try {
+    const res = await fetch(`${API_BASE}/experiments/scenarios`);
+    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    console.warn('Failed to fetch scenarios from API, using default list', e);
+    return ['normal', 'gradual_congestion', 'sudden_surge', 'concurrent_flows'];
+  }
+};
 
 export interface RoutingResult {
   decision_id: string;

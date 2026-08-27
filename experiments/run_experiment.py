@@ -178,7 +178,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run ResiliNet Mininet Experiments")
-    parser.add_argument("--scenario", type=str, required=True, choices=["normal", "gradual_congestion", "sudden_surge"])
+    parser.add_argument("--scenario", type=str, required=True, choices=["normal", "gradual_congestion", "sudden_surge", "concurrent_flows"])
     parser.add_argument("--duration", type=int, default=60, help="Duration in seconds")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for traffic generation")
     parser.add_argument("--experiment-id", type=str, default=None, help="Experiment ID for tracking")

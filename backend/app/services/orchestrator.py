@@ -119,11 +119,9 @@ class Orchestrator:
         link_id = payload.get("link_id")
         risk = payload.get("predicted_risk")
         is_violation = payload.get("is_violation_predicted")
+        is_violation_actual = payload.get("is_violation_actual", False)
 
-        if link_id and risk is not None:
-            # We expect link_id like s1-p1, which doesn't directly map to src->dst.
-            # We need to find the edge that has this out_port.
-            # For simplicity, if we know the switch (s1) and port (1), we can find the target.
+        if link_id:
             try:
                 switch, port_str = link_id.split("-p")
                 port = int(port_str)
@@ -133,17 +131,16 @@ class Orchestrator:
                 target_switch = None
                 for u, v, data in self.router.graph.edges(data=True):
                     if u == switch and data.get("out_port") == port:
-                        # update_link_predictions expects a list of dicts
-                        self.router.update_link_predictions([{'source': u, 'target': v, 'congestion_prob': risk}])
+                        if risk is not None:
+                            self.router.update_link_predictions([{'source': u, 'target': v, 'congestion_prob': risk}])
                         edge_found = True
                         target_switch = v
 
-
                 if edge_found and target_switch:
-                    is_violation_actual = event.get("payload", {}).get("is_violation_actual", False)
                     evaluate = False
-
-                    if self.policy == "predictive" and is_violation or self.policy == "reactive" and is_violation_actual:
+                    if self.policy == "predictive" and is_violation:
+                        evaluate = True
+                    elif self.policy == "reactive" and is_violation_actual:
                         evaluate = True
 
                     if evaluate:

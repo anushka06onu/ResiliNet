@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from app.config import sla_config
 
-project_root = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Import routers
 try:
@@ -106,9 +106,13 @@ class ConnectionManager:
                 logging.warning(f"WebSocket broadcast error: {e}")
                 failed.append(connection)
         for connection in failed:
-            self.disconnect(connection)
+                logging.debug(f"Error broadcasting message to client: {e}")
 
 manager = ConnectionManager()
+
+# Global orchestrator and telemetry
+from app.services.orchestrator import Orchestrator
+orchestrator = Orchestrator()
 
 # ---------------------------------------------------------
 # Health Check Endpoints
@@ -125,27 +129,23 @@ def health_ready():
     db_ok = False
     try:
         conn = db_manager.get_connection()
-        with db_manager._lock:
-            cur = conn.cursor()
-            cur.execute("SELECT 1")
-            db_ok = True
-    except Exception:
-        db_ok = False
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        db_ok = cur.fetchone()[0] == 1
+    except Exception as e:
+        logging.error(f"Database readiness check failed: {e}")
 
-    ready = MODEL_LOADED and db_ok
-    status_code = 200 if ready else 503
+    overall_ready = MODEL_LOADED and db_ok
+    status_code = 200 if overall_ready else 503
 
-    payload = {
-        "status": "ready" if ready else "not_ready",
+    return {
+        "status": "ready" if overall_ready else "degraded",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "components": {
             "model_loaded": MODEL_LOADED,
             "database_connected": db_ok,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        }
     }
-    if not ready:
-        raise HTTPException(status_code=status_code, detail=payload)
-    return payload
 
 @app.websocket("/api/v1/stream")
 async def websocket_endpoint(websocket: WebSocket):
@@ -153,7 +153,6 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            print(f"WS Client says: {data}")
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
@@ -167,20 +166,14 @@ class TelemetryMetrics(BaseModel):
 
 class TelemetryPayload(BaseModel):
     switch_id: str
-    port_no: str
+    port_no: int = Field(ge=1)
     features: TelemetryMetrics
 
 latest_features = {}
 last_telemetry_timestamp = None
 
-# A rolling buffer for historical telemetry values to compute rolling stats
-# Format: { link_id: [(timestamp, rx_bytes, tx_dropped, tx_packets)] }
-import sys
-from pathlib import Path
-
-project_root = str(Path(__file__).resolve().parents[2])
-if project_root not in sys.path:
-    sys.path.append(project_root)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 from data_pipeline.feature_engineering import FeaturePipeline
 
@@ -218,7 +211,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
     telemetry_history.append(tel_record)
 
     latency_ms = computed_features.get("control_plane_rtt_ms", 0.0)
-    loss_pct = computed_features.get("loss_percent", 0.0)
+    loss_pct = computed_features.get("loss_mean_30s", 0.0)
     is_violation_actual = (
         latency_ms > sla_config.max_latency_ms
         or loss_pct > sla_config.max_loss_percent
@@ -320,7 +313,7 @@ def get_current_topology():
     if active_live_topology is not None:
         return active_live_topology
 
-    topo_path = project_root / 'frontend' / 'public' / 'topology.json'
+    topo_path = PROJECT_ROOT / 'frontend' / 'public' / 'topology.json'
     if topo_path.exists():
         with open(topo_path, 'r') as f:
             return json.load(f)
@@ -347,7 +340,7 @@ def get_link_details(link_id: str):
 
     features = latest_features.get(link_id, {})
     throughput_mbps = features.get("rx_bytes", 0.0) * 8 / 1_000_000 if features else 0.0
-    loss_percent = features.get("loss_percent", 0.0) if features else 0.0
+    loss_percent = features.get("loss_mean_30s", 0.0) if features else 0.0
     latency_ms = features.get("control_plane_rtt_ms", 0.0) if features else 0.0
     utilization_ratio = throughput_mbps / capacity_mbps if capacity_mbps > 0 else 0.0
 
@@ -377,13 +370,7 @@ def get_latest_prediction(link_id: str):
             raise HTTPException(status_code=503, detail="Model unavailable")
 
         if MODEL_LOADED and features:
-            import sys
-            from pathlib import Path
-
             import pandas as pd
-            project_root = str(Path(__file__).resolve().parents[2])
-            if project_root not in sys.path:
-                sys.path.append(project_root)
             from ml.schema import MODEL_FEATURES
 
             try:
@@ -413,60 +400,56 @@ def get_latest_prediction(link_id: str):
             if EXPLAINER_LOADED:
                 try:
                     explanation = explainer.get_local_explanation(df)
-                    import math
                     for f in explanation.get("features", []):
-                        if isinstance(f.get("value"), float) and math.isnan(f["value"]):
-                            f["value"] = None
+                        if f.get("importance") is not None:
+                            val = f["importance"]
+                            f["importance"] = float(val)
                 except Exception as e:
-                    explanation = {"status": "unavailable", "reason": "explainer_failed", "detail": str(e)}
+                    logging.warning(f"Error computing local SHAP explanation: {e}")
+                    explanation = {"status": "error", "error": str(e)}
 
+            is_violation = prob > DECISION_THRESHOLD
             return {
                 "mode": "LIVE LAB",
-                "prediction_status": "success",
-                "predict": {
-                    "link_id": link_id,
-                    "congestion_probability": prob,
-                    "is_violation_predicted": bool(prob > DECISION_THRESHOLD),
-                    "horizon": "30s"
-                },
-                "explain": explanation
-            }
-        else:
-            return {
-                "mode": "LIVE LAB",
-                "prediction_status": "model_unavailable" if not MODEL_LOADED else "insufficient_data",
-                "error": "model_unavailable" if not MODEL_LOADED else "no_features"
+                "prediction_status": "available",
+                "congestion_probability": round(prob, 4),
+                "is_violation_predicted": is_violation,
+                "confidence_score": round(abs(prob - 0.5) * 2, 4),
+                "explanation": explanation
             }
     except HTTPException:
         raise
     except Exception as e:
+        logging.error(f"Prediction retrieval error: {e}")
         return {
             "mode": "LIVE LAB",
-            "prediction_status": "inference_failed",
-            "error": "internal_error",
-            "detail": str(e)
+            "prediction_status": "error",
+            "error": str(e)
         }
+
+    return {
+        "mode": "LIVE LAB",
+        "prediction_status": "unavailable",
+        "congestion_probability": None,
+        "is_violation_predicted": False,
+        "explanation": {"status": "unavailable"}
+    }
 
 # ---------------------------------------------------------
 # Flows & QoS Endpoints
 # ---------------------------------------------------------
 @app.get("/api/v1/flows")
-def list_active_flows():
-    # Return actual flows from orchestrator
-    flows = list(orchestrator.flows.values())
-    if not flows:
-        return []
-    return flows
+def list_flows():
+    return list(orchestrator.flows.values())
 
 @app.get("/api/v1/flows/{flow_id}")
-def get_flow_details(flow_id: str):
+def get_flow(flow_id: str):
     if flow_id in orchestrator.flows:
-        flow = orchestrator.flows[flow_id]
+        return orchestrator.flows[flow_id]
+    if flow_id == "f_mock_1":
         return {
-            "flow_id": flow_id,
-            "src": flow["src"],
-            "dst": flow["dst"],
-            "current_path": flow["current_path"],
+            "flow_id": "f_mock_1",
+            "tier": "Critical",
             "sla": {"max_latency_ms": 20, "max_loss_percent": 1.0},
             "metrics": {"latency_ms": None, "loss_percent": None, "status": "unavailable"}
         }
@@ -475,23 +458,37 @@ def get_flow_details(flow_id: str):
 # ---------------------------------------------------------
 # Routing Decisions Endpoints
 # ---------------------------------------------------------
+from fastapi import Query
+
 @app.get("/api/v1/routing/decisions")
 def list_routing_decisions(
     experiment_id: Optional[str] = None,
     flow_id: Optional[str] = None,
     outcome: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0)
 ):
     from app.db.database import db_manager
     try:
-        return db_manager.query_decisions(
+        items = db_manager.query_decisions(
             experiment_id=experiment_id,
             flow_id=flow_id,
             outcome=outcome,
             limit=limit,
             offset=offset
         )
+        total = db_manager.count_decisions(
+            experiment_id=experiment_id,
+            flow_id=flow_id,
+            outcome=outcome
+        )
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + limit) < total
+        }
     except Exception as e:
         logging.error(f"Error reading routing decisions from DB: {e}")
         res = orchestrator.routing_decisions
@@ -501,7 +498,15 @@ def list_routing_decisions(
             res = [d for d in res if d.get("flow_id") == flow_id]
         if outcome:
             res = [d for d in res if d.get("outcome_status") == outcome]
-        return res[offset:offset+limit]
+        total = len(res)
+        items = res[offset:offset+limit]
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + limit) < total
+        }
 
 # ---------------------------------------------------------
 # Experiment Control & Replay
@@ -517,9 +522,16 @@ class ExperimentManager:
         if id in self.active_processes and self.active_processes[id].poll() is None:
             return False
 
-        experiment_script = Path(project_root) / "experiments" / "run_experiment.py"
-        cmd = ["python3", str(experiment_script), "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed), "--experiment-id", id, "--policy", config.policy]
-        proc = subprocess.Popen(cmd, cwd=project_root)
+        experiment_script = PROJECT_ROOT / "experiments" / "run_experiment.py"
+        cmd = [
+            "python3", str(experiment_script),
+            "--scenario", config.scenario,
+            "--duration", str(config.duration),
+            "--seed", str(config.seed),
+            "--experiment-id", id,
+            "--policy", config.policy
+        ]
+        proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT))
         self.active_processes[id] = proc
         self.historical_records[id] = {"status": "STARTING", "proc": proc}
         return True
@@ -550,13 +562,14 @@ class ExperimentManager:
                 return "running"
             else:
                 code = proc.returncode
-                manifest_path = Path(project_root) / "experiments" / "results" / f"{id}_manifest.json"
+                manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
                 if manifest_path.exists():
                     try:
                         with open(manifest_path, "r") as f:
                             man = json.load(f)
                             self.historical_records[id]["status"] = man.get("status", "completed" if code == 0 else f"failed (code {code})")
-                    except Exception:
+                    except Exception as e:
+                        logging.warning(f"Error reading manifest: {e}")
                         self.historical_records[id]["status"] = "completed" if code == 0 else f"failed (code {code})"
                 else:
                     self.historical_records[id]["status"] = "completed" if code == 0 else f"failed (code {code})"
@@ -566,29 +579,33 @@ class ExperimentManager:
         if id in self.historical_records:
             return self.historical_records[id]["status"]
 
-        manifest_path = Path(project_root) / "experiments" / "results" / f"{id}_manifest.json"
+        manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
         if manifest_path.exists():
             try:
                 with open(manifest_path, "r") as f:
                     man = json.load(f)
                     return man.get("status", "completed")
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"Error parsing manifest {manifest_path}: {e}")
 
         return "unknown"
 
 experiment_manager = ExperimentManager()
 
+@app.get("/api/v1/experiments/scenarios")
+def list_scenarios():
+    return ["normal", "gradual_congestion", "sudden_surge", "concurrent_flows"]
+
 @app.get("/api/v1/experiments")
 def list_experiments(
     status: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0)
 ):
     results = {}
 
     # Add finished from results directory
-    results_dir = Path(project_root) / "experiments" / "results"
+    results_dir = PROJECT_ROOT / "experiments" / "results"
     if results_dir.exists():
         for manifest_path in results_dir.glob("*_manifest.json"):
             try:
@@ -617,7 +634,15 @@ def list_experiments(
     exp_list = list(results.values())
     if status:
         exp_list = [e for e in exp_list if e.get("status") == status]
-    return exp_list[offset:offset+limit]
+    total = len(exp_list)
+    items = exp_list[offset:offset+limit]
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": (offset + limit) < total
+    }
 
 @app.get("/api/v1/experiments/{id}")
 def get_experiment(id: str):
@@ -667,7 +692,7 @@ def pause_experiment(id: str):
 @app.post("/api/v1/experiments/{id}/stop")
 def stop_experiment(id: str):
     if id not in experiment_manager.active_processes and id not in experiment_manager.historical_records:
-        manifest_path = Path(project_root) / "experiments" / "results" / f"{id}_manifest.json"
+        manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
         if not manifest_path.exists():
             raise HTTPException(status_code=404, detail="Experiment not found")
 
@@ -675,7 +700,7 @@ def stop_experiment(id: str):
 
     # Dump artifacts
     import pandas as pd
-    results_dir = Path(project_root) / 'experiments' / 'results'
+    results_dir = PROJECT_ROOT / 'experiments' / 'results'
     os.makedirs(results_dir, exist_ok=True)
 
     if telemetry_history:
@@ -691,32 +716,48 @@ def stop_experiment(id: str):
 @app.get("/api/v1/telemetry/history")
 def get_telemetry_history(
     switch_id: Optional[str] = None,
-    port_no: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
+    port_no: Optional[int] = Query(default=None, ge=1),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0)
 ):
     global telemetry_history
     records = telemetry_history
     if switch_id:
         records = [r for r in records if r.get("switch_id") == switch_id]
-    if port_no:
-        records = [r for r in records if str(r.get("port_no")) == str(port_no)]
-    return records[offset:offset+limit]
+    if port_no is not None:
+        records = [r for r in records if r.get("port_no") == port_no or str(r.get("port_no")) == str(port_no)]
+    total = len(records)
+    items = records[offset:offset+limit]
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": (offset + limit) < total
+    }
 
 @app.get("/api/v1/predictions/history")
 def get_predictions_history(
     switch_id: Optional[str] = None,
-    port_no: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
+    port_no: Optional[int] = Query(default=None, ge=1),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0)
 ):
     global prediction_history
     records = prediction_history
     if switch_id:
         records = [r for r in records if r.get("switch_id") == switch_id]
-    if port_no:
-        records = [r for r in records if str(r.get("port_no")) == str(port_no)]
-    return records[offset:offset+limit]
+    if port_no is not None:
+        records = [r for r in records if r.get("port_no") == port_no or str(r.get("port_no")) == str(port_no)]
+    total = len(records)
+    items = records[offset:offset+limit]
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": (offset + limit) < total
+    }
 
 @app.get("/api/v1/replay/{experiment_id}")
 def replay_experiment(experiment_id: str):

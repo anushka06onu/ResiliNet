@@ -12,7 +12,7 @@ def test_telemetry_ingest_and_features():
     for i in range(15):
         payload = {
             "switch_id": "s1",
-            "port_no": "1",
+            "port_no": 1,
             "features": {
                 "rx_bytes": 1000.0 * (i + 1),
                 "tx_bytes": 5000.0 * (i + 1),
@@ -61,7 +61,10 @@ def test_topology_ingest():
 def test_routing_decisions_query():
     response = client.get("/api/v1/routing/decisions?limit=10")
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    data = response.json()
+    assert "items" in data
+    assert "total" in data
+    assert isinstance(data["items"], list)
 
 def test_health_endpoints():
     live_res = client.get("/health/live")
@@ -77,14 +80,30 @@ def test_paginated_endpoints():
     # Experiments pagination
     exp_res = client.get("/api/v1/experiments?limit=5&offset=0")
     assert exp_res.status_code == 200
-    assert isinstance(exp_res.json(), list)
+    exp_data = exp_res.json()
+    assert "items" in exp_data
+    assert "total" in exp_data
+    assert isinstance(exp_data["items"], list)
 
     # Telemetry history pagination
-    tel_res = client.get("/api/v1/telemetry/history?limit=10&offset=0")
+    tel_res = client.get("/api/v1/telemetry/history?port_no=1&limit=10&offset=0")
     assert tel_res.status_code == 200
-    assert isinstance(tel_res.json(), list)
+    tel_data = tel_res.json()
+    assert "items" in tel_data
+    assert "total" in tel_data
+    assert isinstance(tel_data["items"], list)
 
     # Predictions history pagination
-    pred_res = client.get("/api/v1/predictions/history?limit=10&offset=0")
+    pred_res = client.get("/api/v1/predictions/history?port_no=1&limit=10&offset=0")
     assert pred_res.status_code == 200
-    assert isinstance(pred_res.json(), list)
+    pred_data = pred_res.json()
+    assert "items" in pred_data
+    assert "total" in pred_data
+    assert isinstance(pred_data["items"], list)
+
+def test_experiments_scenarios_endpoint():
+    res = client.get("/api/v1/experiments/scenarios")
+    assert res.status_code == 200
+    scenarios = res.json()
+    assert "concurrent_flows" in scenarios
+    assert "normal" in scenarios

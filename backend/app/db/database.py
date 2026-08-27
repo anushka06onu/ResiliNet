@@ -114,7 +114,7 @@ class DatabaseManager:
             if outcome:
                 query += " AND outcome_status = ?"
                 params.append(outcome)
-            query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+            query += " ORDER BY timestamp DESC, decision_id DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
 
             cursor.execute(query, params)
@@ -139,6 +139,31 @@ class DatabaseManager:
                     "rollback_result": r[14]
                 })
             return decisions
+
+    def count_decisions(
+        self,
+        experiment_id: Optional[str] = None,
+        flow_id: Optional[str] = None,
+        outcome: Optional[str] = None
+    ) -> int:
+        """Count total decisions matching query filters."""
+        conn = self.get_connection()
+        with self._lock:
+            cursor = conn.cursor()
+            query = "SELECT COUNT(*) FROM routing_decisions WHERE 1=1"
+            params = []
+            if experiment_id:
+                query += " AND experiment_id = ?"
+                params.append(experiment_id)
+            if flow_id:
+                query += " AND flow_id = ?"
+                params.append(flow_id)
+            if outcome:
+                query += " AND outcome_status = ?"
+                params.append(outcome)
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+            return row[0] if row else 0
 
     def close(self):
         with self._lock:

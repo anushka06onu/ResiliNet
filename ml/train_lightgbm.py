@@ -33,6 +33,7 @@ from datetime import timedelta
 
 from data_pipeline.feature_engineering import FeaturePipeline
 from data_pipeline.label_generation import generate_future_labels
+from data_pipeline.validate_dataset import validate_feature_dataset
 from ml.schema import CURRENT_FEATURE_SCHEMA_VERSION, MODEL_FEATURES
 
 
@@ -84,6 +85,7 @@ def generate_mock_experiments():
         base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
         rx_bytes_counter = 0
         tx_bytes_counter = 0
+        tx_dropped_counter = 0
 
         for t in range(num_samples):
             current_time = base_time + timedelta(seconds=t * 2)
@@ -91,16 +93,19 @@ def generate_mock_experiments():
             congested = (t >= congestion_start)
 
             loss_percent = np.random.exponential(2.5) if congested else np.random.exponential(0.1)
-            tx_dropped = np.random.poisson(5) if congested else np.random.poisson(0)
+            # Cumulative drop counter
+            tx_dropped_counter += int(np.random.poisson(5) if congested else 0)
             latency = np.random.normal(15, 5) if congested else np.random.normal(3, 1)
+            latency = max(0.5, latency) # Plausible positive RTT
             utilization = np.random.uniform(0.8, 1.0) if congested else np.random.uniform(0.1, 0.4)
 
-            rx_bytes_counter += int(np.random.normal(100, 50))
-            tx_bytes_counter += int(np.random.uniform(5000, 15000)) * 2
+            # Strictly non-negative byte increments
+            rx_bytes_counter += max(10, int(np.random.normal(100, 30)))
+            tx_bytes_counter += max(500, int(np.random.uniform(5000, 15000)) * 2)
 
             raw_metrics = {
                 "loss_percent": loss_percent,
-                "tx_dropped": tx_dropped,
+                "tx_dropped": tx_dropped_counter,
                 "control_plane_rtt_ms": latency,
                 "utilization": utilization,
                 "rx_bytes": rx_bytes_counter,
@@ -109,19 +114,20 @@ def generate_mock_experiments():
 
             computed_features = pipeline.process_raw_telemetry(f"link_{exp}", raw_metrics, current_time)
 
-            if computed_features:
+            # Exclude warm-up rows (where status is INSUFFICIENT_DATA)
+            if computed_features.get("status") == "OK":
                 rows.append({
                     'experiment_id': exp,
                     'timestamp': t,
                     'src_switch': 's1',
                     'dst_switch': 's2',
-                    'loss_mean_30s': computed_features.get('loss_mean_30s', 0.0),
-                    'tx_dropped_max': computed_features.get('tx_dropped_max', 0),
-                    'control_plane_rtt_ms': computed_features.get('control_plane_rtt_ms', 0.0),
-                    'rx_bytes_slope': computed_features.get('rx_bytes_slope', 0.0),
-                    'tx_bytes_rate': computed_features.get('tx_bytes_rate', 0.0),
+                    'loss_mean_30s': computed_features['loss_mean_30s'],
+                    'tx_dropped_max': computed_features['tx_dropped_max'],
+                    'control_plane_rtt_ms': computed_features['control_plane_rtt_ms'],
+                    'rx_bytes_slope': computed_features['rx_bytes_slope'],
+                    'tx_bytes_rate': computed_features['tx_bytes_rate'],
                     'data_origin': 'synthetic',
-                    'current_sla_violated': 1 if (computed_features.get('loss_mean_30s', 0.0) > 2.0 or computed_features.get('control_plane_rtt_ms', 0.0) > 20.0) else 0
+                    'current_sla_violated': 1 if (computed_features['loss_mean_30s'] > 2.0 or computed_features['control_plane_rtt_ms'] > 20.0) else 0
                 })
 
     df = pd.DataFrame(rows)
@@ -242,6 +248,25 @@ def train_lgbm_main(data_path=None, generate_synthetic=False):
     feature_cols = MODEL_FEATURES
     target_col = 'sla_violated_in_horizon'
 
+    # Validate dataset quality and schema before proceeding
+    is_valid, violations = validate_feature_dataset(df, target_col=target_col)
+    if not is_valid:
+        print(f"\nERROR: Dataset validation failed for {file_path} with {len(violations)} violations:")
+        for v in violations:
+            print(f"  [VIOLATION] {v}")
+        print("Training aborted. Existing model artifacts were NOT overwritten.\n")
+        sys.exit(1)
+
+    print(f"Dataset validation passed for {file_path} ({len(df)} samples, {len(feature_cols)} features).")
+
+    # Derive data origin dynamically
+    if "data_origin" in df.columns and df["data_origin"].nunique() == 1:
+        data_origin = str(df["data_origin"].iloc[0])
+    elif generate_synthetic or "synthetic" in str(file_path).lower():
+        data_origin = "synthetic"
+    else:
+        data_origin = "mininet_emulation"
+
     data_hash = sha256_file(file_path)
     git_commit, git_dirty = get_git_info()
     run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -308,7 +333,8 @@ def train_lgbm_main(data_path=None, generate_synthetic=False):
             'identical_predictions_lr_rf': identical_lr_rf,
             'identical_predictions_lr_lgb': identical_lr_lgb,
             'mean_absolute_prob_diff_lr_lgb': prob_diff_lr_lgb,
-            'synthetic_data_warning': "All reported metrics are based on synthetic demonstration data. Do not interpret as real-network performance."
+            'data_origin': data_origin,
+            'synthetic_data_warning': "All reported metrics are based on synthetic demonstration data. Do not interpret as real-network performance." if data_origin == "synthetic" else None
         },
         'models': {
             **baseline_metrics,
@@ -337,7 +363,7 @@ def train_lgbm_main(data_path=None, generate_synthetic=False):
             "status": "not_calibrated"
         },
         "creation_time": datetime.now(timezone.utc).isoformat(),
-        "data_origin": "synthetic"
+        "data_origin": data_origin
     }
     with open('ml/artifacts/model_metadata.json', 'w') as f:
         json.dump(model_metadata, f, indent=2)

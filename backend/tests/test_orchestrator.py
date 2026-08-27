@@ -52,3 +52,56 @@ def test_orchestrator_safe_evaluation():
     
     # Flow should be stable after successful rerouting in our simple mockup
     assert orchestrator.flows[flow_id]["state"] == "STABLE"
+
+
+def test_orchestrator_loss_only_sla_violation():
+    """Verify that a loss violation above SLA threshold triggers reactive evaluation even when latency is low."""
+    from backend.app.config import sla_config
+    orchestrator = Orchestrator()
+    orchestrator.set_policy("reactive")
+
+    mock_result = MagicMock()
+    mock_result.success = True
+    mock_result.message = "Reroute installed"
+    mock_result.proposed_path = ["s1", "s3", "s2"]
+    mock_result.rollback_attempted = False
+    orchestrator.router.evaluate_and_reroute = MagicMock(return_value=mock_result)
+
+    flow_id = "f_loss_test"
+    import threading
+    orchestrator.flows[flow_id] = {
+        "flow_id": flow_id,
+        "src": "h1",
+        "dst": "h2",
+        "tier": "Critical",
+        "state": "STABLE",
+        "sla_status": "Healthy",
+        "current_path": ["s1", "s2"]
+    }
+    orchestrator.flow_locks[flow_id] = threading.Lock()
+
+    orchestrator.router.graph.add_node("s1")
+    orchestrator.router.graph.add_node("s2")
+    orchestrator.router.graph.add_edge("s1", "s2", out_port=1, risk=0.0)
+
+    # Telemetry with low latency (5ms < 20ms threshold) but high loss (5.0% > 1.0% threshold)
+    low_latency_ms = 5.0
+    high_loss_pct = sla_config.max_loss_percent + 2.0
+    is_violation_actual = (low_latency_ms > sla_config.max_latency_ms or high_loss_pct > sla_config.max_loss_percent)
+    assert is_violation_actual is True
+
+    event = {
+        "payload": {
+            "link_id": "s1-p1",
+            "loss_rate": high_loss_pct,
+            "latency_ms": low_latency_ms,
+            "is_violation_actual": is_violation_actual
+        }
+    }
+
+    orchestrator.handle_telemetry_event(event)
+    import time
+    time.sleep(0.5)
+
+    assert orchestrator.flows[flow_id]["state"] == "STABLE"
+    assert orchestrator.router.evaluate_and_reroute.called

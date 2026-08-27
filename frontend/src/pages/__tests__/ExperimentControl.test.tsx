@@ -7,6 +7,7 @@ vi.mock('../../services/api');
 
 describe('ExperimentControl Component', () => {
   it('renders simulation configuration panel and starts experiment', async () => {
+    vi.mocked(api.getScenarios).mockResolvedValue(['normal', 'gradual_congestion', 'sudden_surge', 'concurrent_flows']);
     vi.mocked(api.getExperiments).mockResolvedValue([]);
     vi.mocked(api.startExperiment).mockResolvedValue({
       status: 'STARTING',

@@ -1,19 +1,37 @@
 import { useState, useEffect } from 'react';
 import { Play, Square, Pause, Settings, RefreshCw, FastForward } from 'lucide-react';
-import { startExperiment, stopExperiment, getExperiments } from '../services/api';
+import { startExperiment, stopExperiment, getExperiments, getScenarios } from '../services/api';
 import type { ExperimentConfig } from '../services/api';
 
 const ExperimentControl = () => {
   const [status, setStatus] = useState('Stopped');
   const [scenario, setScenario] = useState<ExperimentConfig['scenario']>('normal');
+  const [availableScenarios, setAvailableScenarios] = useState<string[]>([
+    'normal',
+    'gradual_congestion',
+    'sudden_surge',
+    'concurrent_flows',
+  ]);
   const [policy, setPolicy] = useState<ExperimentConfig['policy']>('predictive');
   const [currentExpId, setCurrentExpId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (typeof getScenarios === 'function') {
+      const res = getScenarios();
+      if (res && typeof res.then === 'function') {
+        res.then((scenarios) => {
+          if (scenarios && scenarios.length > 0) {
+            setAvailableScenarios(scenarios);
+          }
+        }).catch(() => {});
+      }
+    }
+
     const checkStatus = async () => {
       try {
         const exps = await getExperiments();
-        const running = exps.find((e: any) => e.status === 'running');
+        const expList = Array.isArray(exps) ? exps : exps?.items || [];
+        const running = expList.find((e: any) => e.status === 'running');
         if (running) {
           setStatus('Running');
           setCurrentExpId(running.id);
@@ -109,11 +127,13 @@ const ExperimentControl = () => {
               <select
                 value={scenario}
                 onChange={(e) => setScenario(e.target.value as ExperimentConfig['scenario'])}
-                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500 capitalize"
               >
-                <option value="normal">Normal Operations</option>
-                <option value="gradual_congestion">Gradual Congestion</option>
-                <option value="sudden_surge">Sudden Burst (Flash Crowd)</option>
+                {availableScenarios.map((sc) => (
+                  <option key={sc} value={sc}>
+                    {sc.replace(/_/g, ' ')}
+                  </option>
+                ))}
               </select>
             </div>
 
