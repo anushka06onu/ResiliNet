@@ -14,17 +14,17 @@ class Orchestrator:
         self.router = PredictiveRouter(topology_json='frontend/public/topology.json')
         self.flows = {}
         self.routing_decisions = []
-        
-        # Add some initial mock flows for demonstration
-        # In a real environment, Ryu or Mininet would register these flows
-        self.register_flow("f_1", "h1", "h4", ["s1", "s2", "s3"], "Critical")
-        self.register_flow("f_2", "h2", "h3", ["s2", "s3"], "Background")
 
     def load_topology(self, topo_data):
-        """Update the internal PredictiveRouter graph dynamically."""
+        """Update the internal PredictiveRouter graph dynamically and discover flows."""
         self.router.graph.clear()
+        
+        hosts = []
         for node in topo_data.get('nodes', []):
-            self.router.graph.add_node(node['id'], type=node['type'])
+            node_type = node.get('type', 'switch')
+            self.router.graph.add_node(node['id'], type=node_type)
+            if node_type == 'host':
+                hosts.append(node['id'])
             
         for link in topo_data.get('links', []):
             base_cost = 1
@@ -35,6 +35,24 @@ class Orchestrator:
             
             self.router.graph.add_edge(src, dst, weight=base_cost, original_weight=base_cost, risk=0.0, out_port=src_port)
             self.router.graph.add_edge(dst, src, weight=base_cost, original_weight=base_cost, risk=0.0, out_port=dst_port)
+
+        # Derive initial flows from hosts
+        self._derive_flows_from_topology(hosts)
+
+    def _derive_flows_from_topology(self, hosts):
+        """Auto-generate baseline flows between discovered hosts."""
+        # Simple heuristic: pair hosts based on ID or just connect specific ones
+        # For small_test: h1->h4 and h2->h3 if they exist
+        expected_pairs = [("h1", "h4", "Critical"), ("h2", "h3", "Background")]
+        
+        for idx, (src, dst, tier) in enumerate(expected_pairs):
+            if src in hosts and dst in hosts:
+                path = self.router.calculate_path(src, dst)
+                if path:
+                    flow_id = f"f_{idx+1}"
+                    # Ensure we don't overwrite if it already exists to avoid resetting state
+                    if flow_id not in self.flows:
+                        self.register_flow(flow_id, src, dst, path, tier)
 
     def register_flow(self, flow_id, src, dst, initial_path, tier="Standard"):
         self.flows[flow_id] = {
@@ -66,7 +84,8 @@ class Orchestrator:
                 edge_found = False
                 for u, v, data in self.router.graph.edges(data=True):
                     if u == switch and data.get("out_port") == port:
-                        self.router.update_link_risk(u, v, risk)
+                        # update_link_predictions expects a list of dicts
+                        self.router.update_link_predictions([{'source': u, 'target': v, 'congestion_prob': risk}])
                         edge_found = True
                         
                 if edge_found and is_violation:
@@ -90,7 +109,7 @@ class Orchestrator:
                 nw_dst = "10.0.0.4" if flow["dst"] == "h4" else "10.0.0.3"
                 
                 logging.info(f"Flow {flow_id} crosses congested switch {congested_switch}. Evaluating reroute...")
-                success, msg = self.router.evaluate_and_reroute(
+                success, msg, proposed_path = self.router.evaluate_and_reroute(
                     flow_id=flow_id,
                     source=path[0],
                     target=path[-1],
@@ -119,7 +138,8 @@ class Orchestrator:
                     # Update flow path (ideally we fetch proposed_path from router, but router evaluate_and_reroute doesn't return it yet)
                     # We will just mark it as ACTIVE again for now.
                     flow["sla_status"] = "Rerouted"
-                    decision["proposed_path"] = "New Path (Unknown)"
+                    flow["current_path"] = proposed_path
+                    decision["proposed_path"] = proposed_path
                 else:
                     flow["sla_status"] = "Violated"
                     

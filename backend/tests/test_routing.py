@@ -47,7 +47,7 @@ def test_evaluate_and_reroute_success(mock_run, router):
     
     # Reroute from s1 to s3
     current_path = ["s1", "s2"] # dummy
-    success, msg = router.evaluate_and_reroute(
+    success, msg, proposed_path = router.evaluate_and_reroute(
         flow_id="flow_1", source="s1", target="s3", 
         current_path=current_path, nw_src="10.0.0.1", nw_dst="10.0.0.2"
     )
@@ -101,7 +101,7 @@ def test_evaluate_and_reroute_failure_and_rollback(mock_run, router):
     mock_run.side_effect = side_effect
     
     current_path = ["s1", "s2"]
-    success, msg = router.evaluate_and_reroute(
+    success, msg, proposed_path = router.evaluate_and_reroute(
         flow_id="flow_2", source="s1", target="s3", 
         current_path=current_path, nw_src="10.0.0.1", nw_dst="10.0.0.2"
     )
@@ -153,7 +153,7 @@ def test_evaluate_and_reroute_verification_failure_and_rollback(mock_run, router
     mock_run.side_effect = side_effect
     
     current_path = ["s1", "s2"]
-    success, msg = router.evaluate_and_reroute(
+    success, msg, proposed_path = router.evaluate_and_reroute(
         flow_id="flow_3", source="s1", target="s3", 
         current_path=current_path, nw_src="10.0.0.1", nw_dst="10.0.0.2"
     )
