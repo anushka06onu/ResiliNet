@@ -72,34 +72,67 @@ class FeaturePipeline:
         if len(history) < self.min_samples:
             return {"status": "INSUFFICIENT_DATA"}
 
-        # Extract series
-        def _safe_float(val, default=0.0):
+        # Validate that no metrics have invalid/NaN floats
+        def _parse_strict_float(val, name):
+            if val is None:
+                return None
             try:
-                if val is None or np.isnan(float(val)):
-                    return default
-                return float(val)
+                f_val = float(val)
+                if np.isnan(f_val) or np.isinf(f_val):
+                    return None
+                return f_val
             except (ValueError, TypeError):
-                return default
+                return None
 
-        loss_series = [_safe_float(h["metrics"].get("loss_percent", 0.0)) for h in history]
+        # Check latest values
+        latest = history[-1]["metrics"]
+        for key in ["rx_bytes", "tx_bytes", "control_plane_rtt_ms", "tx_dropped", "loss_percent", "utilization"]:
+            if _parse_strict_float(latest.get(key), key) is None:
+                return {"status": "INVALID_SAMPLE", "message": f"Invalid or missing float for metric {key}"}
+
+        loss_series = []
+        for h in history:
+            val = _parse_strict_float(h["metrics"].get("loss_percent"), "loss_percent")
+            if val is None:
+                return {"status": "INVALID_SAMPLE", "message": "Invalid float in loss_percent history"}
+            loss_series.append(val)
+
+        reset_detected = False
 
         # Compute counter differences safely (handling wraparounds/resets)
         def _get_diff(series):
+            nonlocal reset_detected
             diffs = []
             for i in range(1, len(series)):
                 diff = series[i] - series[i-1]
-                if diff < 0: # Handle reset or wraparound
+                if diff < 0:
+                    reset_detected = True
                     diff = series[i]
                 diffs.append(diff)
             return diffs
 
-        tx_dropped_raw = [_safe_float(h["metrics"].get("tx_dropped", 0)) for h in history]
+        tx_dropped_raw = []
+        for h in history:
+            val = _parse_strict_float(h["metrics"].get("tx_dropped"), "tx_dropped")
+            if val is None:
+                return {"status": "INVALID_SAMPLE", "message": "Invalid float in tx_dropped history"}
+            tx_dropped_raw.append(val)
         tx_dropped_diffs = _get_diff(tx_dropped_raw)
 
-        rx_bytes_raw = [_safe_float(h["metrics"].get("rx_bytes", 0)) for h in history]
+        rx_bytes_raw = []
+        for h in history:
+            val = _parse_strict_float(h["metrics"].get("rx_bytes"), "rx_bytes")
+            if val is None:
+                return {"status": "INVALID_SAMPLE", "message": "Invalid float in rx_bytes history"}
+            rx_bytes_raw.append(val)
         rx_bytes_diffs = _get_diff(rx_bytes_raw)
 
-        tx_bytes_raw = [_safe_float(h["metrics"].get("tx_bytes", 0)) for h in history]
+        tx_bytes_raw = []
+        for h in history:
+            val = _parse_strict_float(h["metrics"].get("tx_bytes"), "tx_bytes")
+            if val is None:
+                return {"status": "INVALID_SAMPLE", "message": "Invalid float in tx_bytes history"}
+            tx_bytes_raw.append(val)
         tx_bytes_diffs = _get_diff(tx_bytes_raw)
 
         # Compute aggregates
@@ -108,35 +141,36 @@ class FeaturePipeline:
 
         # Slope of rx_bytes (linear regression over time)
         timestamps = np.array([h["timestamp"].timestamp() for h in history])
-        # Center timestamps for numerical stability
         t_centered = timestamps - timestamps[0]
+        time_coverage = float(t_centered[-1])
 
         rx_bytes_slope = 0.0
         if len(rx_bytes_raw) > 1 and t_centered[-1] > 0:
-            # Linear regression: y = mx + c
-            # We regress the cumulative rx_bytes over time to find bytes/sec slope
-            # If counters reset, we should use cumulative sum of diffs instead of raw
             cum_rx = np.concatenate(([0], np.cumsum(rx_bytes_diffs)))
             if len(t_centered) == len(cum_rx):
                 slope, _ = np.polyfit(t_centered, cum_rx, 1)
                 rx_bytes_slope = float(slope)
 
-        # Rate of tx_bytes between last two ticks
         tx_bytes_rate = 0.0
         if len(history) > 1:
             dt = t_centered[-1] - t_centered[-2]
             if dt > 0 and len(tx_bytes_diffs) > 0:
                 tx_bytes_rate = float(tx_bytes_diffs[-1] / dt)
 
-        # Current latest values for passthrough
-        latest = history[-1]["metrics"]
+        age_ms = 0.0
+        if len(history) > 1:
+            age_ms = float((history[-1]["timestamp"] - history[-2]["timestamp"]).total_seconds() * 1000)
 
         return {
             "status": "OK",
+            "sample_count": len(history),
+            "coverage_seconds": round(time_coverage, 2),
+            "latest_sample_age_ms": round(age_ms, 2),
+            "reset_detected": reset_detected,
             "loss_mean_30s": loss_mean_30s,
             "tx_dropped_max": tx_dropped_max,
-            "control_plane_rtt_ms": _safe_float(latest.get("control_plane_rtt_ms", 0.0)),
+            "control_plane_rtt_ms": float(latest.get("control_plane_rtt_ms", 0.0)),
             "rx_bytes_slope": rx_bytes_slope,
             "tx_bytes_rate": tx_bytes_rate,
-            "utilization": _safe_float(latest.get("utilization", 0.0))
+            "utilization": float(latest.get("utilization", 0.0))
         }

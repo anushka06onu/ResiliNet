@@ -59,11 +59,11 @@ export const useStore = create<SystemState>((set) => ({
     }),
   checkDataModeExpiry: () =>
     set((state) => {
-      if (state.dataMode === 'LIVE LAB' && state.latestTelemetry) {
+      if ((state.dataMode === 'LIVE' || state.dataMode === 'LIVE LAB') && state.latestTelemetry) {
         const timestamp = new Date(state.latestTelemetry.timestamp).getTime();
         const age = Date.now() - timestamp;
-        if (age > 15000) {
-          return { dataMode: 'DEMO DATA' };
+        if (age > 10000) {
+          return { dataMode: 'STALE', systemStatus: 'STALE' };
         }
       }
       return state;

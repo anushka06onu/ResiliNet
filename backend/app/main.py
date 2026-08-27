@@ -170,6 +170,9 @@ async def ingest_telemetry(payload: TelemetryPayload):
     if computed_features.get("status") == "STALE_DATA":
         return {"status": "dropped", "message": "Stale metric"}
 
+    if computed_features.get("status") == "INVALID_SAMPLE":
+        return {"status": "dropped", "message": computed_features.get("message", "Invalid sample")}
+
     latest_features[link_id] = computed_features
 
     # Append to telemetry history

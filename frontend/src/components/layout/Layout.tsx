@@ -64,15 +64,15 @@ const Layout = () => {
           <div
             className={`text-xs px-3 py-1.5 rounded-md border text-center font-bold tracking-wider uppercase
             ${
-              dataMode === 'LIVE LAB'
+              dataMode === 'LIVE' || dataMode === 'LIVE LAB'
                 ? 'bg-emerald-900/30 text-emerald-400 border-emerald-500/50'
-                : dataMode === 'EXPERIMENT REPLAY'
+                : dataMode === 'REPLAY' || dataMode === 'EXPERIMENT REPLAY'
                   ? 'bg-indigo-900/30 text-indigo-400 border-indigo-500/50'
-                  : dataMode === 'DEMO DATA'
+                  : dataMode === 'SIMULATION' || dataMode === 'DEMO DATA'
                     ? 'bg-amber-900/30 text-amber-400 border-amber-500/50'
-                    : dataMode === 'DISCONNECTED'
-                      ? 'bg-red-900/30 text-red-400 border-red-500/50'
-                      : 'bg-slate-800 text-slate-300 border-slate-700'
+                    : dataMode === 'STALE'
+                      ? 'bg-orange-900/30 text-orange-400 border-orange-500/50'
+                      : 'bg-red-900/30 text-red-400 border-red-500/50'
             }`}
           >
             {dataMode}
@@ -85,18 +85,24 @@ const Layout = () => {
         <div
           className={`w-full py-1.5 text-center text-xs font-bold tracking-widest uppercase text-white shadow-md
           ${
-            dataMode === 'LIVE LAB'
+            dataMode === 'LIVE' || dataMode === 'LIVE LAB'
               ? 'bg-emerald-600'
-              : dataMode === 'EXPERIMENT REPLAY'
+              : dataMode === 'REPLAY' || dataMode === 'EXPERIMENT REPLAY'
                 ? 'bg-indigo-600'
-                : dataMode === 'DEMO DATA'
-                  ? 'bg-amber-600'
-                  : dataMode === 'DISCONNECTED'
-                    ? 'bg-red-600'
-                    : 'bg-slate-700'
+                : dataMode === 'SIMULATION' || dataMode === 'DEMO DATA'
+                  ? 'bg-amber-600 animate-pulse'
+                  : dataMode === 'STALE'
+                    ? 'bg-orange-600'
+                    : 'bg-red-600'
           }`}
         >
-          DATA MODE: {dataMode}
+          {dataMode === 'SIMULATION' || dataMode === 'DEMO DATA'
+            ? '⚠️ SIMULATION — NOT LIVE NETWORK DATA'
+            : dataMode === 'STALE'
+              ? '⚠️ STALE TELEMETRY — NO RECENT UPDATES'
+              : dataMode === 'LIVE' || dataMode === 'LIVE LAB'
+                ? '🟢 LIVE LAB — ACTIVE SDN TELEMETRY'
+                : `DATA MODE: ${dataMode}`}
         </div>
         <Outlet />
       </main>

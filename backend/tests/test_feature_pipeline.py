@@ -15,7 +15,9 @@ def test_feature_pipeline_insufficient_data():
         "tx_dropped": 0,
         "tx_errors": 0,
         "latency_ms": 10.0,
-        "control_plane_rtt_ms": 10.0
+        "control_plane_rtt_ms": 10.0,
+        "loss_percent": 0.0,
+        "utilization": 0.1
     }
     
     # 1st sample
