@@ -107,6 +107,12 @@ async def ingest_telemetry(payload: TelemetryPayload):
     
     # Store globally so frontend can poll it
     latest_features[link_id] = computed_features
+    
+    # Append to telemetry history
+    tel_record = computed_features.copy()
+    tel_record['timestamp'] = last_telemetry_timestamp.isoformat() + "Z"
+    tel_record['link_id'] = link_id
+    telemetry_history.append(tel_record)
 
     event = {
         "mode": "LIVE LAB",
@@ -146,6 +152,13 @@ async def ingest_telemetry(payload: TelemetryPayload):
                 event["payload"]["predicted_risk"] = float(prob)
                 event["payload"]["is_violation_predicted"] = bool(prob > DECISION_THRESHOLD)
                 event["payload"]["prediction_status"] = "success"
+                
+                # Append to prediction history
+                pred_record = computed_features.copy()
+                pred_record['timestamp'] = event["timestamp"]
+                pred_record['link_id'] = link_id
+                pred_record['predicted_risk'] = float(prob)
+                prediction_history.append(pred_record)
             except Exception as e:
                 print(f"Prediction failed: {e}")
                 event["payload"]["prediction_status"] = "inference_failed"
@@ -350,8 +363,16 @@ class ExperimentConfig(BaseModel):
     duration: int = 60
     seed: int = 42
 
+telemetry_history = []
+prediction_history = []
+
 @app.post("/api/v1/experiments/{id}/start")
 def start_experiment(id: str, config: ExperimentConfig = None):
+    global telemetry_history, prediction_history
+    telemetry_history = []
+    prediction_history = []
+    orchestrator.routing_decisions = []
+    
     if config is None:
         config = ExperimentConfig()
         
@@ -372,8 +393,23 @@ def stop_experiment(id: str):
     if id in active_experiments and active_experiments[id].poll() is None:
         import signal
         active_experiments[id].send_signal(signal.SIGINT)
-        return {"status": "stopped", "experiment": id}
-    return {"status": "error", "message": "Experiment not running"}
+        
+    # Dump artifacts
+    import pandas as pd
+    import os
+    os.makedirs('experiments/results', exist_ok=True)
+    
+    if telemetry_history:
+        pd.DataFrame(telemetry_history).to_csv(f"experiments/results/{id}_telemetry.csv", index=False)
+    if prediction_history:
+        pd.DataFrame(prediction_history).to_csv(f"experiments/results/{id}_predictions.csv", index=False)
+    if orchestrator.routing_decisions:
+        import json
+        with open(f"experiments/results/{id}_routing_decisions.jsonl", "w") as f:
+            for decision in orchestrator.routing_decisions:
+                f.write(json.dumps(decision) + "\n")
+                
+    return {"status": "stopped", "experiment": id}
 
 @app.get("/api/v1/replay/{experiment_id}")
 def replay_experiment(experiment_id: str):
