@@ -1,14 +1,60 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Play, Square, Pause, Settings, RefreshCw, FastForward } from 'lucide-react';
+import { startExperiment, stopExperiment, getExperiments } from '../services/api';
 
 const ExperimentControl = () => {
   const [status, setStatus] = useState('Stopped');
+  const [scenario, setScenario] = useState('normal');
+  const [policy, setPolicy] = useState('predictive');
+  const [currentExpId, setCurrentExpId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const exps = await getExperiments();
+        const running = exps.find((e: any) => e.status === 'running');
+        if (running) {
+          setStatus('Running');
+          setCurrentExpId(running.id);
+        } else {
+          setStatus('Stopped');
+          setCurrentExpId(null);
+        }
+      } catch (err) {
+        console.error("Failed to fetch experiments", err);
+      }
+    };
+    checkStatus();
+    const interval = setInterval(checkStatus, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleCommand = async (command: string) => {
-    setStatus(command === 'start' ? 'Running' : command === 'pause' ? 'Paused' : 'Stopped');
-    // Simulated API call for the frontend
-    console.log(`Sent ${command} to Mininet backend`);
+    try {
+      if (command === 'start') {
+        setStatus('Starting...');
+        await startExperiment({
+          scenario,
+          policy,
+          duration: 60,
+          seed: 42
+        });
+        setCurrentExpId(`exp_${policy}_${scenario}_ui`);
+        setStatus('Running');
+      } else if (command === 'stop') {
+        setStatus('Stopping...');
+        if (currentExpId) {
+          await stopExperiment(currentExpId);
+        }
+        setStatus('Stopped');
+        setCurrentExpId(null);
+      }
+    } catch (err) {
+      console.error(`Command ${command} failed`, err);
+      setStatus('Error');
+    }
   };
+
 
   const handleReplay = () => {
     setStatus('Running (Replay Mode)');
@@ -33,6 +79,18 @@ const ExperimentControl = () => {
           <h3 className="text-lg font-bold text-slate-200 mb-6 border-b border-slate-800 pb-2">Configuration</h3>
           
           <div className="space-y-4 text-sm text-slate-300">
+            <div className="mt-4">
+              <label className="block mb-1 text-slate-400">Routing Policy</label>
+              <select 
+                value={policy}
+                onChange={(e) => setPolicy(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500"
+              >
+                <option value="static">Static (No Rerouting)</option>
+                <option value="reactive">Reactive (Post-Violation)</option>
+                <option value="predictive">Predictive (ML Proactive)</option>
+              </select>
+            </div>
             <div>
               <label className="block mb-1 text-slate-400">Topology</label>
               <select className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500">
@@ -44,10 +102,14 @@ const ExperimentControl = () => {
             
             <div>
               <label className="block mb-1 text-slate-400">Traffic Scenario</label>
-              <select className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500">
-                <option>High Background Contention</option>
-                <option>Sudden Burst (Flash Crowd)</option>
-                <option>Normal Operations</option>
+                            <select 
+                value={scenario}
+                onChange={(e) => setScenario(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500"
+              >
+                <option value="normal">Normal Operations</option>
+                <option value="gradual_congestion">Gradual Congestion</option>
+                <option value="sudden_surge">Sudden Burst (Flash Crowd)</option>
               </select>
             </div>
 

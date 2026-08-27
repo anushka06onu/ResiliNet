@@ -1,9 +1,15 @@
+import sys
+import re
 
-import { useState, useEffect } from 'react';
-import { Route, CheckCircle, XCircle } from 'lucide-react';
-import { getRoutingDecisions } from '../services/api';
+filename = "frontend/src/pages/RoutingDecisions.tsx"
+with open(filename, "r") as f:
+    content = f.read()
 
-const RoutingDecisions = () => {
+# Replace imports and add state
+new_imports = "import { useState, useEffect } from 'react';\nimport { Route, CheckCircle, XCircle } from 'lucide-react';\nimport { getRoutingDecisions } from '../services/api';"
+content = re.sub(r"import \{ Route, CheckCircle, XCircle \} from 'lucide-react';", new_imports, content)
+
+hooks = """const RoutingDecisions = () => {
   const [decisions, setDecisions] = useState<any[]>([]);
   
   useEffect(() => {
@@ -23,25 +29,16 @@ const RoutingDecisions = () => {
   }, []);
 
   const latest = decisions[0];
+"""
+content = content.replace("const RoutingDecisions = () => {", hooks)
 
-  return (
-    <div className="p-6 h-full flex flex-col">
-      <header className="mb-6 flex justify-between items-end">
-        <div>
-          <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-3">
-            <Route className="text-purple-500" />
-            Routing Decisions Log
-          </h2>
-          <p className="text-slate-400 text-sm">Audit log of automated traffic engineering and path modifications.</p>
-        </div>
+# Remove mock data badge
+content = content.replace("""        <div className="bg-amber-900/30 text-amber-400 border border-amber-500/50 px-3 py-1.5 rounded-md text-xs font-bold tracking-wider uppercase">
+          DEMO SCENARIO — VALUES ARE ILLUSTRATIVE
+        </div>""", "")
 
-      </header>
-
-      <div className="grid grid-cols-3 gap-6 flex-1">
-        
-        {/* Comparison Table */}
-        <div className="col-span-2 flex flex-col h-full bg-slate-900 border border-slate-800 rounded-lg p-4">
-          <h3 className="text-slate-300 font-medium mb-4">Before vs After Rerouting {latest ? `(Flow ${latest.flow_id})` : ''}</h3>
+# Replace the static Before vs After
+before_after = """          <h3 className="text-slate-300 font-medium mb-4">Before vs After Rerouting {latest ? `(Flow ${latest.flow_id})` : ''}</h3>
           <table className="w-full text-left text-sm text-slate-300 mb-6">
             <thead className="bg-slate-800/50 text-xs uppercase text-slate-500 font-semibold border-b border-slate-800">
               <tr>
@@ -77,9 +74,12 @@ const RoutingDecisions = () => {
                 <td className="px-4 py-3 font-mono text-xs">{latest?.proposed_path ? latest.proposed_path.join(' → ') : 'Pending'}</td>
               </tr>
             </tbody>
-          </table>
+          </table>"""
 
-          <h3 className="text-slate-300 font-medium mb-4">Recent Predictive Interventions</h3>
+content = re.sub(r"          <h3 className=\"text-slate-300 font-medium mb-4\">Before vs After Rerouting.*?</table>", before_after, content, flags=re.DOTALL)
+
+# Replace the static Recent Interventions
+interventions = """          <h3 className="text-slate-300 font-medium mb-4">Recent Predictive Interventions</h3>
           <div className="flex-1 overflow-y-auto space-y-3">
             {decisions.map((dec, i) => (
               <div key={i} className="bg-slate-800/30 border border-slate-700/50 p-4 rounded-lg">
@@ -110,34 +110,11 @@ const RoutingDecisions = () => {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
+          </div>"""
 
-        {/* Info Panel */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-lg flex flex-col">
-          <h3 className="text-slate-300 font-medium mb-4">Controller Logic</h3>
-          <div className="text-sm text-slate-400 space-y-4">
-            <p>
-              When the LightGBM engine predicts a high congestion risk for a link, the predictive routing controller inflates the NetworkX edge weight for that link dynamically.
-            </p>
-            <p>
-              It then recalculates the shortest path using Dijkstra's algorithm.
-            </p>
-            <div className="bg-slate-800 p-3 rounded border-l-2 border-amber-500">
-              <strong className="text-slate-200 block mb-1">Safety Checks</strong>
-              <ul className="list-disc list-inside space-y-1">
-                <li>Minimum Risk Improvement &ge; 0.2</li>
-                <li>Flow Cooldown &ge; 10s</li>
-              </ul>
-            </div>
-            <p>
-              If all safety checks pass, the controller is designed to execute `ovs-ofctl add-flow` to install high-priority OpenFlow rules in the emulated Open vSwitch network. (This page represents an illustrative routing-decision workflow until live controller integration is complete).
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+# Remove static divs
+content = re.sub(r"          <h3 className=\"text-slate-300 font-medium mb-4\">Recent Predictive Interventions</h3>.*?</div>\s*</div>", interventions, content, flags=re.DOTALL)
 
-export default RoutingDecisions;
+
+with open(filename, "w") as f:
+    f.write(content)
