@@ -13,7 +13,7 @@ def run_experiment(scenario, duration, seed):
     
     # 1. Start Ryu controller in background
     print("Starting Ryu controller...")
-    ryu_cmd = ["ryu-manager", "network/controller/simple_switch_13.py", "network/controller/rest_topology.py"]
+    ryu_cmd = ["ryu-manager", "network/controller/resilinet_ryu.py"]
     ryu_proc = subprocess.Popen(ryu_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(3) # Wait for Ryu to start
     
