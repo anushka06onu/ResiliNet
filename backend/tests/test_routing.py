@@ -59,7 +59,8 @@ def test_evaluate_and_reroute_success(mock_run, router):
     # Should install forward path: s1 -> s2, s2 -> s3
     # Should install reverse path: s3 -> s2, s2 -> s1
     # Plus 4 dump-flows calls for verification
-    assert mock_run.call_count == 8
+    # Plus 4 dump-flows calls for traffic verification
+    assert mock_run.call_count == 12
     
     calls = mock_run.call_args_list
     forward_1 = " ".join(calls[0][0][0])
