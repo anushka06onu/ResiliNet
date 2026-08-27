@@ -28,7 +28,7 @@ def get_python_version():
     import sys
     return sys.version
 
-def run_experiment(scenario, duration, seed, experiment_id=None, policy="predictive", allow_mock=False):
+def run_experiment(scenario, duration, seed, experiment_id=None, policy="predictive", allow_mock=False, results_root=None, overwrite=False):
     if not experiment_id:
         experiment_id = f"{scenario}_{policy}_seed{seed}"
 
@@ -36,7 +36,11 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
     # Resolve absolute paths based on this script's location
     project_root = Path(__file__).resolve().parents[1]
-    results_dir = project_root / "experiments" / "results" / experiment_id
+    base_results = Path(results_root) if results_root else project_root / "experiments" / "results"
+    results_dir = base_results / experiment_id
+
+    if results_dir.exists() and not overwrite and mode_check_is_active(results_dir):
+        raise FileExistsError(f"Experiment directory {results_dir} already exists. Pass --overwrite to replace.")
     results_dir.mkdir(parents=True, exist_ok=True)
 
     status = "starting"
@@ -85,11 +89,22 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                 }) + "\n")
 
             with open(results_dir / "controller.log", "w") as f:
-                f.write(f"[INFO] Requested policy: {policy}\n[INFO] Effective policy: {policy}\n[INFO] Policy implementation: {policy.capitalize()}RoutingPolicy\n")
+                f.write(f"[INFO] Requested policy: {policy}\n[INFO] Effective policy: {policy}\n[INFO] Policy implementation: PredictiveRouter:{policy}\n")
 
             with open(results_dir / "scenario.log", "w") as f:
                 f.write(f"[INFO] Mock Scenario {scenario} completed for {experiment_id}\n")
     else:
+        # Try to synchronize with local Orchestrator if backend is running
+        try:
+            import urllib.request
+            req_data = json.dumps({"experiment_id": experiment_id, "policy": policy}).encode('utf-8')
+            req = urllib.request.Request("http://localhost:8000/api/v1/experiments/start", data=req_data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=1) as resp:
+                res_json = json.loads(resp.read().decode())
+                print(f"Synchronized with Orchestrator: effective policy = {res_json.get('effective_policy')}")
+        except Exception:
+            pass
+
         # 1. Start Ryu controller in background
         print("Starting Ryu controller...")
         ryu_script = project_root / "network" / "controller" / "resilinet_ryu.py"
@@ -121,6 +136,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                     mn_env["EXPERIMENT_DURATION"] = str(duration)
                     mn_env["EXPERIMENT_ID"] = experiment_id
                     mn_env["RESILINET_POLICY"] = policy
+                    mn_env["RESILINET_RESULTS_DIR"] = str(results_dir)
 
                     mn_log = open(results_dir / "scenario.log", "w")
                     try:
@@ -178,7 +194,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
     end_time = datetime.now(timezone.utc).isoformat()
 
     # Save manifest
-    is_real = (mode == "REAL" and status == "completed")
+    executed_in_mininet = (mode == "REAL" and status not in {"environment_unavailable", "controller_failed", "scenario_failed"})
     manifest = {
         "experiment_id": experiment_id,
         "scenario": scenario,
@@ -186,14 +202,14 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         "duration": duration,
         "requested_policy": policy,
         "effective_policy": policy,
-        "policy_implementation": f"{policy.capitalize()}RoutingPolicy",
+        "policy_implementation": f"PredictiveRouter:{policy}",
         "status": status,
         "mode": mode,
-        "real_experiment": is_real,
-        "data_origin": "mininet" if is_real else "mock",
-        "evidence_scope": "network_experiment" if is_real else "pipeline_testing",
+        "real_experiment": executed_in_mininet,
+        "data_origin": "mininet" if executed_in_mininet else "mock",
+        "evidence_scope": "network_experiment" if executed_in_mininet else "pipeline_testing",
         "predictive_performance_validated": False,
-        "evidence_complete": evidence_complete if mode == "REAL" else True,
+        "evidence_complete": evidence_complete if executed_in_mininet else True,
         "metadata": {
             "start_time": start_time,
             "end_time": end_time,
@@ -227,14 +243,21 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         import sys
         sys.exit(1)
 
+
+def mode_check_is_active(d: Path) -> bool:
+    """Helper to check if directory has existing contents."""
+    return any(d.iterdir()) if d.exists() else False
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run ResiliNet Mininet Experiments")
     parser.add_argument("--scenario", type=str, required=True, choices=["normal", "gradual_congestion", "sudden_surge", "concurrent_flows"])
     parser.add_argument("--duration", type=int, default=60, help="Duration in seconds")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for traffic generation")
     parser.add_argument("--experiment-id", type=str, default=None, help="Experiment ID for tracking")
-    parser.add_argument("--policy", type=str, default="predictive", choices=["static", "reactive", "predictive"], help="Routing policy to use")
+    parser.add_argument("--policy", type=str, default="predictive", choices=["static", "reactive", "predictive", "no_reroute", "reactive_threshold", "predictive_ml"], help="Routing policy to use")
     parser.add_argument("--allow-mock", action="store_true", help="Allow running mock experiment if Ryu/Mininet is unavailable")
+    parser.add_argument("--overwrite", action="store_true", help="Allow overwriting existing experiment result directory")
 
     args = parser.parse_args()
-    run_experiment(args.scenario, args.duration, args.seed, args.experiment_id, args.policy, args.allow_mock)
+    run_experiment(args.scenario, args.duration, args.seed, args.experiment_id, args.policy, args.allow_mock, overwrite=args.overwrite)

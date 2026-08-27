@@ -173,7 +173,7 @@ def test_sample_real_run_manifest_provenance():
 
 
 def test_mock_experiment_execution_and_provenance(tmp_path):
-    """Verify mock experiment execution produces isolated artifacts and transparent metadata."""
+    """Verify mock experiment execution produces isolated artifacts and transparent metadata in tmp_path."""
     import json
     from pathlib import Path
     from experiments.run_experiment import run_experiment
@@ -185,11 +185,11 @@ def test_mock_experiment_execution_and_provenance(tmp_path):
         seed=42,
         experiment_id=exp_id,
         policy="predictive",
-        allow_mock=True
+        allow_mock=True,
+        results_root=tmp_path
     )
 
-    project_root = Path(__file__).resolve().parents[2]
-    res_dir = project_root / "experiments" / "results" / exp_id
+    res_dir = tmp_path / exp_id
     manifest_path = res_dir / "manifest.json"
     sums_path = res_dir / "SHA256SUMS"
 
@@ -212,8 +212,19 @@ def test_mock_experiment_execution_and_provenance(tmp_path):
     assert manifest["predictive_performance_validated"] is False
     assert manifest["requested_policy"] == "predictive"
     assert manifest["effective_policy"] == "predictive"
-    assert manifest["policy_implementation"] == "PredictiveRoutingPolicy"
+    assert manifest["policy_implementation"] == "PredictiveRouter:predictive"
 
-    # Cleanup created mock folder to keep worktree clean
-    import shutil
-    shutil.rmtree(res_dir)
+
+def test_scenario_results_dir_isolation(tmp_path):
+    """Verify that evidence capture writes strictly to the isolated run directory."""
+    from experiments.evidence_collector import capture_switch_state
+
+    run_dir = tmp_path / "test_run_isolation"
+    run_dir.mkdir(parents=True)
+
+    # Capture switch state in isolated run_dir
+    res = capture_switch_state(["s1", "s2"], run_dir, stage="before")
+
+    assert (run_dir / "evidence_report.json").exists()
+    assert (run_dir / "switches").exists()
+    assert not (tmp_path / "evidence_report.json").exists()

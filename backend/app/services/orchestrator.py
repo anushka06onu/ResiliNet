@@ -30,10 +30,6 @@ class Orchestrator:
         self.routing_decisions = []
         self.policy = "predictive"
         self.active_experiment_id = None
-
-        self.routing_decisions = []
-        self.policy = "predictive"
-        self.active_experiment_id = None
         from app.db.database import db_manager
         self.db_manager = db_manager
 
@@ -41,9 +37,19 @@ class Orchestrator:
         self.db_manager.initialize_db()
 
     def set_policy(self, policy: str):
-        valid = policy.lower() if policy.lower() in ["static", "reactive", "predictive"] else "predictive"
-        self.policy = valid
-        self.router.set_policy(valid)
+        allowed = {
+            "static": "static",
+            "no_reroute": "static",
+            "reactive": "reactive",
+            "reactive_threshold": "reactive",
+            "predictive": "predictive",
+            "predictive_ml": "predictive"
+        }
+        policy_clean = policy.strip().lower()
+        if policy_clean not in allowed:
+            raise ValueError(f"Invalid policy '{policy}'. Must be one of: {sorted(list(allowed.keys()))}")
+        self.policy = allowed[policy_clean]
+        self.router.set_policy(self.policy)
         logging.info(f"Orchestrator policy set to: {self.policy}")
 
     def begin_experiment(self, experiment_id: str, policy: str):

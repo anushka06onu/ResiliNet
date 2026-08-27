@@ -33,15 +33,25 @@ class PredictiveRouter:
         self.last_reroute_time = {} # Track cooldowns per flow
         self.min_risk_improvement = min_risk_improvement
         self.cooldown = cooldown
-        self.policy = policy.lower() if policy in ["static", "reactive", "predictive"] else "predictive"
+        self.policy = "predictive"
+        self.set_policy(policy)
         logging.info(f"Initialized Router with effective policy: {self.policy}")
 
     def set_policy(self, policy: str):
-        if policy in ["static", "reactive", "predictive"]:
-            self.policy = policy
+        allowed = {
+            "static": "static",
+            "no_reroute": "static",
+            "reactive": "reactive",
+            "reactive_threshold": "reactive",
+            "predictive": "predictive",
+            "predictive_ml": "predictive"
+        }
+        policy_clean = str(policy).strip().lower()
+        if policy_clean in allowed:
+            self.policy = allowed[policy_clean]
             logging.info(f"Router policy updated to: {self.policy}")
         else:
-            raise ValueError(f"Invalid routing policy '{policy}'. Must be 'static', 'reactive', or 'predictive'.")
+            raise ValueError(f"Invalid routing policy '{policy}'. Must be one of: {sorted(list(allowed.keys()))}")
 
     def load_topology(self, topology_json):
         if not os.path.exists(topology_json):

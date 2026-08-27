@@ -14,7 +14,21 @@ def sha256_bytes(data: bytes) -> str:
     return h.hexdigest()
 
 
-def capture_switch_state(switches, results_dir, experiment_id, stage="before"):
+def log_experiment_event(results_dir, event_type: str, details: dict = None):
+    """Appends a structured timestamped event to events.jsonl in the run directory."""
+    results_path = Path(results_dir)
+    results_path.mkdir(parents=True, exist_ok=True)
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event": event_type,
+        "details": details or {}
+    }
+    with open(results_path / "events.jsonl", "a") as f:
+        f.write(json.dumps(event) + "\n")
+    return event
+
+
+def capture_switch_state(switches, results_dir, stage="before", experiment_id=None):
     """
     Captures live OpenFlow flow tables and port statistics for active Mininet switches.
     Records structured command provenance including byte counts, return codes, and SHA-256 digests.

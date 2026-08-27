@@ -239,10 +239,28 @@ def test_policy_behavioral_differences(router):
     assert not res_reac_pred.success
     assert res_reac_pred.failure_stage == "POLICY_REACTIVE_WAIT"
 
+    # On actual violation, reactive attempts rerouting
+    import hashlib
+    cookie_hex_reac = hex(int(hashlib.md5(b"f_reac").hexdigest()[:8], 16))
+    with patch('network.routing.predictive_routing.subprocess.run') as mock_run:
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = f"cookie={cookie_hex_reac}, priority=100, nw_src=10.0.0.1, nw_dst=10.0.0.2, actions=output:1\n \
+                            cookie={cookie_hex_reac}, priority=100, nw_src=10.0.0.1, nw_dst=10.0.0.2, actions=output:3\n \
+                            cookie={cookie_hex_reac}, priority=100, nw_src=10.0.0.2, nw_dst=10.0.0.1, actions=output:4\n \
+                            cookie={cookie_hex_reac}, priority=100, nw_src=10.0.0.2, nw_dst=10.0.0.1, actions=output:2".encode()
+        mock_run.return_value = mock_res
+        res_reac_act = router.evaluate_and_reroute(
+            flow_id="f_reac", source="s1", target="s3",
+            current_path=["s1", "s2"], nw_src="10.0.0.1", nw_dst="10.0.0.2",
+            is_violation_predicted=False, is_violation_actual=True
+        )
+        assert res_reac_act.success
+        assert res_reac_act.proposed_path == ["s1", "s2", "s3"]
+
     # 3. Predictive Policy
     router.set_policy("predictive")
     # On prediction without actual violation, predictive attempts rerouting
-    import hashlib
     cookie_hex = hex(int(hashlib.md5(b"f_pred").hexdigest()[:8], 16))
     with patch('network.routing.predictive_routing.subprocess.run') as mock_run:
         mock_res = MagicMock()
@@ -263,9 +281,13 @@ def test_policy_behavioral_differences(router):
 
 def test_policy_validation_and_rejection(router):
     """Verify router validates allowed policy options and rejects invalid configurations."""
-    for p in ["static", "reactive", "predictive"]:
+    for p, canonical in [
+        ("static", "static"), ("no_reroute", "static"),
+        ("reactive", "reactive"), ("reactive_threshold", "reactive"),
+        ("predictive", "predictive"), ("predictive_ml", "predictive")
+    ]:
         router.set_policy(p)
-        assert router.policy == p
+        assert router.policy == canonical
 
     with pytest.raises(ValueError):
         router.set_policy("random_invalid_policy")
