@@ -93,24 +93,24 @@ feature_pipeline = FeaturePipeline()
 async def ingest_telemetry(payload: TelemetryPayload):
     global last_telemetry_timestamp
     last_telemetry_timestamp = datetime.utcnow()
-    
+
     link_id = f"{payload.switch_id}-p{payload.port_no}"
-    
+
     # payload.features currently has rx_bytes, tx_bytes, control_plane_rtt_ms, loss_percent, etc.
     # We pass it to the FeaturePipeline
     computed_features = feature_pipeline.process_raw_telemetry(
-        link_id=link_id, 
+        link_id=link_id,
         raw_metrics=payload.features,
         timestamp=last_telemetry_timestamp
     )
-    
+
     if computed_features.get("status") == "INSUFFICIENT_DATA":
         latest_features[link_id] = payload.features # Store raw until warm
         return {"status": "warming_up", "message": "Gathering more telemetry"}
-    
+
     # Store globally so frontend can poll it
     latest_features[link_id] = computed_features
-    
+
     # Append to telemetry history
     tel_record = computed_features.copy()
     tel_record['timestamp'] = last_telemetry_timestamp.isoformat() + "Z"
@@ -132,7 +132,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
             "prediction_status": "unavailable"
         }
     }
-    
+
     # Attempt prediction
     try:
         from app.api.predict import model, MODEL_LOADED, DECISION_THRESHOLD
@@ -144,18 +144,18 @@ async def ingest_telemetry(payload: TelemetryPayload):
             if project_root not in sys.path:
                 sys.path.append(project_root)
             from ml.schema import MODEL_FEATURES
-            
+
             df = pd.DataFrame(
                 [computed_features],
                 columns=MODEL_FEATURES
             ).apply(pd.to_numeric, errors="coerce")
-            
+
             try:
                 prob = model.predict(df)[0]
                 event["payload"]["predicted_risk"] = float(prob)
                 event["payload"]["is_violation_predicted"] = bool(prob > DECISION_THRESHOLD)
                 event["payload"]["prediction_status"] = "success"
-                
+
                 # Append to prediction history
                 pred_record = computed_features.copy()
                 pred_record['timestamp'] = event["timestamp"]
@@ -204,7 +204,7 @@ def system_status():
         dt = (datetime.utcnow() - last_telemetry_timestamp).total_seconds()
         if dt <= 10.0:
             mode = "LIVE LAB"
-            
+
     return {"status": mode, "version": "1.1.0", "active_connections": len(manager.active_connections)}
 
 @app.get("/api/v1/topologies")
@@ -215,7 +215,7 @@ def list_topologies():
 def get_current_topology():
     if active_live_topology is not None:
         return active_live_topology
-        
+
     topo_path = 'frontend/public/topology.json'
     if os.path.exists(topo_path):
         with open(topo_path, 'r') as f:
@@ -229,7 +229,7 @@ def get_link_details(link_id: str):
 @app.get("/api/v1/links/{link_id}/latest-prediction")
 def get_latest_prediction(link_id: str):
     features = latest_features.get(link_id, {})
-    
+
     try:
         from app.api.predict import model, explainer, MODEL_LOADED, EXPLAINER_LOADED, DECISION_THRESHOLD
         if MODEL_LOADED and features:
@@ -240,7 +240,7 @@ def get_latest_prediction(link_id: str):
             if project_root not in sys.path:
                 sys.path.append(project_root)
             from ml.schema import MODEL_FEATURES
-            
+
             try:
                 df = pd.DataFrame(
                     [features],
@@ -253,7 +253,7 @@ def get_latest_prediction(link_id: str):
                     "error": "feature_schema_mismatch",
                     "detail": str(e)
                 }
-            
+
             try:
                 prob = float(model.predict(df)[0])
             except Exception as e:
@@ -263,7 +263,7 @@ def get_latest_prediction(link_id: str):
                     "error": "inference_failed",
                     "detail": str(e)
                 }
-                
+
             explanation = {"status": "unavailable", "reason": "explainer_not_loaded"}
             if EXPLAINER_LOADED:
                 try:
@@ -274,7 +274,7 @@ def get_latest_prediction(link_id: str):
                             f["value"] = None
                 except Exception as e:
                     explanation = {"status": "unavailable", "reason": "explainer_failed", "detail": str(e)}
-                    
+
             return {
                 "mode": "LIVE LAB",
                 "prediction_status": "success",
@@ -348,11 +348,11 @@ def list_experiments():
     for exp_id, proc in active_experiments.items():
         if proc.poll() is None:
             results.append({"id": exp_id, "status": "running"})
-            
+
     for f in glob.glob("experiments/results/*.json"):
         import os
         results.append({"id": os.path.basename(f).replace('.json',''), "status": "completed"})
-    
+
     return results
 
 @app.get("/api/v1/experiments/{id}")
@@ -375,13 +375,13 @@ def start_experiment(id: str, config: ExperimentConfig = None):
     telemetry_history = []
     prediction_history = []
     orchestrator.routing_decisions = []
-    
+
     if config is None:
         config = ExperimentConfig()
-        
+
     if id in active_experiments and active_experiments[id].poll() is None:
         return {"status": "error", "message": "Experiment already running"}
-        
+
     experiment_script = Path(project_root) / "experiments" / "run_experiment.py"
     cmd = ["python3", str(experiment_script), "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed)]
     proc = subprocess.Popen(cmd, cwd=project_root)
@@ -397,13 +397,13 @@ def stop_experiment(id: str):
     if id in active_experiments and active_experiments[id].poll() is None:
         import signal
         active_experiments[id].send_signal(signal.SIGINT)
-        
+
     # Dump artifacts
     import pandas as pd
     import os
     results_dir = Path(project_root) / 'experiments' / 'results'
     os.makedirs(results_dir, exist_ok=True)
-    
+
     if telemetry_history:
         pd.DataFrame(telemetry_history).to_csv(results_dir / f"{id}_telemetry.csv", index=False)
     if prediction_history:
@@ -413,7 +413,7 @@ def stop_experiment(id: str):
         with open(results_dir / f"{id}_routing_decisions.jsonl", "w") as f:
             for decision in orchestrator.routing_decisions:
                 f.write(json.dumps(decision) + "\n")
-                
+
     return {"status": "stopped", "experiment": id}
 
 @app.get("/api/v1/replay/{experiment_id}")
