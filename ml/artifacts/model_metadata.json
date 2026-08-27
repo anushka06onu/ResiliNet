@@ -1,5 +1,5 @@
 {
-  "run_id": "run_20260827_145929_3f0263",
+  "run_id": "run_20260827_160256_1f3da3",
   "model_version": "1.1.0",
   "feature_schema_version": "v1.1",
   "feature_names": [
@@ -9,14 +9,14 @@
     "rx_bytes_slope",
     "tx_bytes_rate"
   ],
-  "training_data_hash": "b810c8e127e05b59e97ea64450818e0db53ee8185375c42ac8531278c60d8dfa",
-  "training_commit": "a10eaf969d1b830d1a3b8d1402921e1ab84a7137",
-  "git_dirty": true,
-  "decision_threshold": 0.28,
+  "training_data_hash": "86de634d371d668d1f8e26167cb51131a9f9a6b384ddd7cc33130cce8902bec6",
+  "training_commit": "49d27b7e82d438b3e4cac179f58a7ca35b240665",
+  "git_dirty": false,
+  "decision_threshold": 0.75,
   "calibration": {
     "method": null,
     "status": "not_calibrated"
   },
-  "creation_time": "2026-08-27T14:59:30.262290+00:00",
+  "creation_time": "2026-08-27T16:02:56.837287+00:00",
   "data_origin": "synthetic"
 }
