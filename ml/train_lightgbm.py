@@ -20,6 +20,9 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 from ml.schema import MODEL_FEATURES
 
+from data_pipeline.feature_engineering import FeaturePipeline
+from datetime import datetime, timedelta
+
 def generate_mock_experiments():
     """
     Generate a highly realistic mock dataset with explicit experiment IDs.
@@ -37,28 +40,50 @@ def generate_mock_experiments():
         is_congested_exp = np.random.rand() < 0.3
         congestion_start = np.random.randint(20, num_samples - 20) if (is_congested_exp and num_samples > 40) else num_samples + 1
         
+        pipeline = FeaturePipeline(history_limit=15)
+        base_time = datetime(2026, 1, 1)
+        rx_bytes_counter = 0
+        tx_bytes_counter = 0
+        
         for t in range(num_samples):
+            current_time = base_time + timedelta(seconds=t * 2)
+            
             # Temporal dynamics
             congested = (t >= congestion_start)
-            loss_mean = np.random.exponential(2.5) if congested else np.random.exponential(0.1)
-            tx_dropped = np.random.poisson(5) if congested else np.random.poisson(0)
-            # Control-plane RTT is usually lower than data-plane latency. 
-            # Assumption: Uncongested control plane responds in ~3ms. Under high data-plane congestion, 
-            # switch CPU/buffer pressure increases control-plane RTT to ~15ms.
-            latency = np.random.normal(15, 5) if congested else np.random.normal(3, 1)
             
-            rows.append({
-                'experiment_id': exp,
-                'timestamp': t,
-                'src_switch': 's1',
-                'dst_switch': 's2',
-                'loss_mean_30s': loss_mean,
-                'tx_dropped_max': tx_dropped,
-                'control_plane_rtt_ms': latency,
-                'rx_bytes_slope': np.random.normal(100, 50),
-                'tx_bytes_rate': np.random.uniform(5000, 15000),
-                'current_sla_violated': 1 if (loss_mean > 2.0 or latency > 20.0) else 0
-            })
+            # Raw metrics
+            loss_percent = np.random.exponential(2.5) if congested else np.random.exponential(0.1)
+            tx_dropped = np.random.poisson(5) if congested else np.random.poisson(0)
+            latency = np.random.normal(15, 5) if congested else np.random.normal(3, 1)
+            utilization = np.random.uniform(0.8, 1.0) if congested else np.random.uniform(0.1, 0.4)
+            
+            rx_bytes_counter += int(np.random.normal(100, 50))
+            tx_bytes_counter += int(np.random.uniform(5000, 15000)) * 2 # 2 seconds
+            
+            raw_metrics = {
+                "loss_percent": loss_percent,
+                "tx_dropped": tx_dropped,
+                "control_plane_rtt_ms": latency,
+                "utilization": utilization,
+                "rx_bytes": rx_bytes_counter,
+                "tx_bytes": tx_bytes_counter
+            }
+            
+            computed_features = pipeline.process_raw_telemetry(f"link_{exp}", raw_metrics, current_time)
+            
+            if computed_features: # Need at least 1 feature set
+                rows.append({
+                    'experiment_id': exp,
+                    'timestamp': t,
+                    'src_switch': 's1',
+                    'dst_switch': 's2',
+                    'loss_mean_30s': computed_features.get('loss_mean_30s', 0.0),
+                    'tx_dropped_max': computed_features.get('tx_dropped_max', 0),
+                    'control_plane_rtt_ms': computed_features.get('control_plane_rtt_ms', 0.0),
+                    'rx_bytes_slope': computed_features.get('rx_bytes_slope', 0.0),
+                    'tx_bytes_rate': computed_features.get('tx_bytes_rate', 0.0),
+                    'current_sla_violated': 1 if (computed_features.get('loss_mean_30s', 0.0) > 2.0 or computed_features.get('control_plane_rtt_ms', 0.0) > 20.0) else 0
+                })
             
     df = pd.DataFrame(rows)
     
