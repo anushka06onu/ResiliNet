@@ -40,7 +40,7 @@ def generate_mock_experiments():
         is_congested_exp = np.random.rand() < 0.3
         congestion_start = np.random.randint(20, num_samples - 20) if (is_congested_exp and num_samples > 40) else num_samples + 1
         
-        pipeline = FeaturePipeline(history_limit=15)
+        pipeline = FeaturePipeline()
         base_time = datetime(2026, 1, 1)
         rx_bytes_counter = 0
         tx_bytes_counter = 0
