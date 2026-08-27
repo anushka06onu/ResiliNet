@@ -102,3 +102,39 @@ def test_validate_telemetry_dataframe_sample_real_run():
         df = pd.read_csv(telemetry_path)
         is_valid, violations = validate_raw_telemetry(df)
         assert is_valid is True, f"Sample real run failed validation: {violations}"
+
+
+def test_sample_real_run_manifest_provenance():
+    """Verify artifact relationships and hashes recorded in sample_real_run manifest."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    manifest_path = project_root / "experiments" / "sample_real_run" / "manifest.json"
+    meta_path = project_root / "ml" / "artifacts" / "model_metadata.json"
+    model_path = project_root / "ml" / "artifacts" / "lightgbm_model.txt"
+    scenario_path = project_root / "experiments" / "scenarios" / "gradual_congestion.py"
+    topology_path = project_root / "network" / "topologies" / "campus_health.py"
+
+    if not manifest_path.exists():
+        pytest.skip("Manifest not present")
+
+    with open(manifest_path, "r") as f:
+        manifest = json.load(f)
+
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+
+    def sha256(p):
+        h = hashlib.sha256()
+        with open(p, "rb") as fl:
+            for chunk in iter(lambda: fl.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    hashes = manifest.get("artifact_hashes", {})
+    assert hashes.get("model_run_id") == meta.get("run_id")
+    assert hashes.get("model_file_sha256") == sha256(model_path)
+    assert hashes.get("scenario_file_sha256") == sha256(scenario_path)
+    assert hashes.get("topology_file_sha256") == sha256(topology_path)

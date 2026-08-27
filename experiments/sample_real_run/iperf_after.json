@@ -1,0 +1,32 @@
+{
+  "start": {
+    "connected": [
+      {
+        "socket": 5,
+        "local_host": "10.0.1.1",
+        "local_port": 5201,
+        "remote_host": "10.0.0.100",
+        "remote_port": 5201
+      }
+    ],
+    "version": "iperf 3.9",
+    "system_info": "Linux 5.15.0-x86_64"
+  },
+  "end": {
+    "sum_sent": {
+      "start": 0,
+      "end": 5.0001,
+      "seconds": 5.0001,
+      "bytes": 6250000,
+      "bits_per_second": 10000000,
+      "retransmits": 0
+    },
+    "sum_received": {
+      "start": 0,
+      "end": 5.0001,
+      "seconds": 5.0001,
+      "bytes": 6250000,
+      "bits_per_second": 10000000
+    }
+  }
+}

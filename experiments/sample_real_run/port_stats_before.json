@@ -1,0 +1,28 @@
+{
+  "switch_dpid": 1,
+  "timestamp": "2026-08-27T12:00:04Z",
+  "ports": [
+    {
+      "port_no": 1,
+      "rx_packets": 420,
+      "tx_packets": 840,
+      "rx_bytes": 630000,
+      "tx_bytes": 1260000,
+      "rx_dropped": 0,
+      "tx_dropped": 0,
+      "rx_errors": 0,
+      "tx_errors": 0
+    },
+    {
+      "port_no": 2,
+      "rx_packets": 120,
+      "tx_packets": 110,
+      "rx_bytes": 180000,
+      "tx_bytes": 165000,
+      "rx_dropped": 0,
+      "tx_dropped": 0,
+      "rx_errors": 0,
+      "tx_errors": 0
+    }
+  ]
+}
