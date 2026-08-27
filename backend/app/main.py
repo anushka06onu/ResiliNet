@@ -19,6 +19,23 @@ except ImportError:
     sys.path.append(os.path.dirname(__file__))
     from api.predict import router as predict_router
 
+from typing import List, Optional
+
+class TopologyNode(BaseModel):
+    id: str
+    type: str
+
+class TopologyLink(BaseModel):
+    source: str
+    source_port: Optional[str] = None
+    target: str
+    target_port: Optional[str] = None
+
+class TopologySchema(BaseModel):
+    nodes: List[TopologyNode]
+    links: List[TopologyLink]
+    mode: Optional[str] = None
+
 app = FastAPI(
     title="ResiliNet API",
     description="Network Digital Twin Backend for Predictive QoS and Routing",
@@ -190,7 +207,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
 @app.on_event("startup")
 async def startup_event():
     # Stop starting the demo telemetry now that we have a live ingest endpoint
-    pass
+    orchestrator.initialize_db()
 
 # ---------------------------------------------------------
 # System & Topology Endpoints
@@ -201,10 +218,10 @@ from app.services.orchestrator import orchestrator
 
 
 @app.post("/api/v1/topology/ingest")
-async def ingest_topology(payload: dict):
+async def ingest_topology(payload: TopologySchema):
     global active_live_topology
-    active_live_topology = payload
-    orchestrator.load_topology(payload)
+    active_live_topology = payload.dict()
+    orchestrator.load_topology(active_live_topology)
     return {"status": "topology_ingested"}
 
 @app.get("/api/v1/system/status")
@@ -248,6 +265,9 @@ def get_latest_prediction(link_id: str):
             explainer,
             model,
         )
+        if not MODEL_LOADED:
+            raise HTTPException(status_code=503, detail="Model unavailable")
+        
         if MODEL_LOADED and features:
             import sys
             from pathlib import Path
@@ -340,7 +360,7 @@ def get_flow_details(flow_id: str):
             "sla": {"max_latency_ms": 20, "max_loss_percent": 1.0},
             "metrics": {"latency_ms": None, "loss_percent": None, "status": "unavailable"}
         }
-    return {"error": "Flow not found"}
+    raise HTTPException(status_code=404, detail="Flow not found")
 
 # ---------------------------------------------------------
 # Routing Decisions Endpoints
@@ -476,8 +496,7 @@ def start_experiment(id: str, config: ExperimentConfig = None):
     orchestrator.begin_experiment(id, config.policy)
 
     if not experiment_manager.start(id, config):
-
-        return {"status": "error", "message": "Experiment already running"}
+        raise HTTPException(status_code=409, detail="Experiment already running")
 
     return {"status": "STARTING", "experiment": id, "scenario": config.scenario}
 

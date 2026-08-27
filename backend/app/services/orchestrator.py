@@ -35,11 +35,13 @@ class Orchestrator:
         import sqlite3
         self.db_path = project_root / 'experiments' / 'results' / 'resilinet.db'
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        # Initialization moved to initialize_db() called during app startup
+        self.conn = None
         self.db_lock = threading.Lock()
-        self._init_db()
 
-    def _init_db(self):
+    def initialize_db(self):
+        import sqlite3
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         with self.db_lock:
             cursor = self.conn.cursor()
             cursor.execute('''
@@ -55,7 +57,10 @@ class Orchestrator:
                     safeguard_result TEXT,
                     installation_status TEXT,
                     verification_status TEXT,
-                    outcome_status TEXT
+                    outcome_status TEXT,
+                    failure_stage TEXT,
+                    error_type TEXT,
+                    rollback_result TEXT
                 )
             ''')
             self.conn.commit()
@@ -101,10 +106,15 @@ class Orchestrator:
         self._derive_flows_from_topology(hosts)
 
     def _derive_flows_from_topology(self, hosts):
-        """Auto-generate baseline flows between discovered hosts."""
-        # Simple heuristic: pair hosts based on ID or just connect specific ones
-        # For small_test: h1->h4 and h2->h3 if they exist
-        expected_pairs = [("h1", "h4", "Critical"), ("h2", "h3", "Background")]
+        """Auto-generate baseline flows between discovered hosts dynamically."""
+        sorted_hosts = sorted(hosts)
+        n = len(sorted_hosts)
+        expected_pairs = []
+        for i in range(n // 2):
+            src = sorted_hosts[i]
+            dst = sorted_hosts[n - 1 - i]
+            tier = "Critical" if i == 0 else "Background"
+            expected_pairs.append((src, dst, tier))
 
         for idx, (src, dst, tier) in enumerate(expected_pairs):
             if src in hosts and dst in hosts:
@@ -195,12 +205,15 @@ class Orchestrator:
 
                         # Derive IPs dynamically from host names (e.g. h1 -> 10.0.0.1)
                         try:
-                            nw_src = f"10.0.0.{flow['src'].replace('h', '')}"
-                            nw_dst = f"10.0.0.{flow['dst'].replace('h', '')}"
+                            import re
+                            src_num = re.search(r'\d+', flow['src']).group()
+                            dst_num = re.search(r'\d+', flow['dst']).group()
+                            nw_src = f"10.0.0.{src_num}"
+                            nw_dst = f"10.0.0.{dst_num}"
                         except Exception:
                             # Fallback if names don't match pattern
-                            nw_src = "10.0.0.1" if flow["src"] == "h1" else "10.0.0.2"
-                            nw_dst = "10.0.0.4" if flow["dst"] == "h4" else "10.0.0.3"
+                            nw_src = "10.0.0.1"
+                            nw_dst = "10.0.0.2"
 
                         logging.info(f"Flow {flow_id} crosses congested edge {congested_u}->{congested_v}. Evaluating reroute...")
 
@@ -226,6 +239,24 @@ class Orchestrator:
 
                         risk_after = self.router.calculate_path_risk(proposed_path) if success and proposed_path else None
 
+                        # Determine failure stage and rollback result
+                        failure_stage = None
+                        error_type = None
+                        rollback_result = None
+
+                        if not success:
+                            if "verification" in msg.lower():
+                                failure_stage = "verification"
+                                rollback_result = "success" if "rollback" not in msg.lower() or "successful" in msg.lower() else "failed"
+                                error_type = "verification_failed"
+                            elif "install" in msg.lower() or "connection" in msg.lower():
+                                failure_stage = "installation"
+                                rollback_result = "pending"
+                                error_type = "installation_error"
+                            else:
+                                failure_stage = "evaluation"
+                                error_type = "no_viable_path"
+
                         # Record decision
                         decision = {
                             "decision_id": str(uuid.uuid4()),
@@ -235,11 +266,14 @@ class Orchestrator:
                             "risk_before": risk_before,
                             "risk_after": risk_after,
                             "original_path": path,
-                            "proposed_path": proposed_path if success else None,
+                            "proposed_path": proposed_path if success else (proposed_path if proposed_path else None),
                             "safeguard_result": msg,
-                            "installation_status": "success" if success else "failed",
-                            "verification_status": "success" if success else "failed",
-                            "outcome_status": "success" if success else "failed"
+                            "installation_status": "success" if success or failure_stage == "verification" else "failed",
+                            "verification_status": "success" if success else ("failed" if failure_stage == "verification" else "skipped"),
+                            "outcome_status": "success" if success else "failed",
+                            "failure_stage": failure_stage,
+                            "error_type": error_type,
+                            "rollback_result": rollback_result
                         }
 
                         if success:
@@ -269,15 +303,16 @@ class Orchestrator:
                                     INSERT INTO routing_decisions (
                                         decision_id, experiment_id, flow_id, timestamp, risk_before, risk_after,
                                         original_path, proposed_path, safeguard_result, installation_status,
-                                        verification_status, outcome_status
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        verification_status, outcome_status, failure_stage, error_type, rollback_result
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ''', (
                                     decision["decision_id"], decision["experiment_id"], decision["flow_id"],
                                     decision["timestamp"], decision["risk_before"], decision["risk_after"],
                                     json.dumps(decision["original_path"]),
                                     json.dumps(decision["proposed_path"]) if decision["proposed_path"] else None,
                                     decision["safeguard_result"], decision["installation_status"],
-                                    decision["verification_status"], decision["outcome_status"]
+                                    decision["verification_status"], decision["outcome_status"],
+                                    decision["failure_stage"], decision["error_type"], decision["rollback_result"]
                                 ))
                                 self.conn.commit()
                         except Exception as e:
