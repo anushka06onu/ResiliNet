@@ -27,9 +27,9 @@ class TopologyNode(BaseModel):
 
 class TopologyLink(BaseModel):
     source: str
-    source_port: Optional[str] = None
+    source_port: int | None = None
     target: str
-    target_port: Optional[str] = None
+    target_port: int | None = None
 
 class TopologySchema(BaseModel):
     nodes: List[TopologyNode]
