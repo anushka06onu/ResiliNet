@@ -35,27 +35,29 @@ class Orchestrator:
         self.db_path = project_root / 'experiments' / 'results' / 'resilinet.db'
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        self.db_lock = threading.Lock()
         self._init_db()
 
     def _init_db(self):
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS routing_decisions (
-                decision_id TEXT PRIMARY KEY,
-                experiment_id TEXT,
-                flow_id TEXT,
-                timestamp TEXT,
-                risk_before REAL,
-                risk_after REAL,
-                original_path TEXT,
-                proposed_path TEXT,
-                safeguard_result TEXT,
-                installation_status TEXT,
-                verification_status TEXT,
-                outcome_status TEXT
-            )
-        ''')
-        self.conn.commit()
+        with self.db_lock:
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS routing_decisions (
+                    decision_id TEXT PRIMARY KEY,
+                    experiment_id TEXT,
+                    flow_id TEXT,
+                    timestamp TEXT,
+                    risk_before REAL,
+                    risk_after REAL,
+                    original_path TEXT,
+                    proposed_path TEXT,
+                    safeguard_result TEXT,
+                    installation_status TEXT,
+                    verification_status TEXT,
+                    outcome_status TEXT
+                )
+            ''')
+            self.conn.commit()
         
     def set_policy(self, policy: str):
         self.policy = policy
@@ -179,9 +181,14 @@ class Orchestrator:
                         # Strip host nodes from path for the router
                         switch_path = [n for n in path if "h" not in n]
 
-                        # Mock IPs (in a real system, these would be in the flow registry)
-                        nw_src = "10.0.0.1" if flow["src"] == "h1" else "10.0.0.2"
-                        nw_dst = "10.0.0.4" if flow["dst"] == "h4" else "10.0.0.3"
+                        # Derive IPs dynamically from host names (e.g. h1 -> 10.0.0.1)
+                        try:
+                            nw_src = f"10.0.0.{flow['src'].replace('h', '')}"
+                            nw_dst = f"10.0.0.{flow['dst'].replace('h', '')}"
+                        except Exception:
+                            # Fallback if names don't match pattern
+                            nw_src = "10.0.0.1" if flow["src"] == "h1" else "10.0.0.2"
+                            nw_dst = "10.0.0.4" if flow["dst"] == "h4" else "10.0.0.3"
 
                         logging.info(f"Flow {flow_id} crosses congested edge {congested_u}->{congested_v}. Evaluating reroute...")
                         
@@ -189,7 +196,7 @@ class Orchestrator:
                         
                         flow["state"] = "INSTALLING"
                         
-                        success, msg, proposed_path = self.router.evaluate_and_reroute(
+                        result = self.router.evaluate_and_reroute(
                             flow_id=flow_id,
                             source=switch_path[0] if switch_path else path[0],
                             target=switch_path[-1] if switch_path else path[-1],
@@ -197,6 +204,9 @@ class Orchestrator:
                             nw_src=nw_src,
                             nw_dst=nw_dst
                         )
+                        success = result.success
+                        msg = result.message
+                        proposed_path = result.proposed_path
                         
                         flow["state"] = "VERIFYING"
                         
@@ -241,22 +251,23 @@ class Orchestrator:
                         # Persist to SQLite
                         import json
                         try:
-                            cursor = self.conn.cursor()
-                            cursor.execute('''
-                                INSERT INTO routing_decisions (
-                                    decision_id, experiment_id, flow_id, timestamp, risk_before, risk_after,
-                                    original_path, proposed_path, safeguard_result, installation_status,
-                                    verification_status, outcome_status
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (
-                                decision["decision_id"], decision["experiment_id"], decision["flow_id"],
-                                decision["timestamp"], decision["risk_before"], decision["risk_after"],
-                                json.dumps(decision["original_path"]), 
-                                json.dumps(decision["proposed_path"]) if decision["proposed_path"] else None,
-                                decision["safeguard_result"], decision["installation_status"],
-                                decision["verification_status"], decision["outcome_status"]
-                            ))
-                            self.conn.commit()
+                            with self.db_lock:
+                                cursor = self.conn.cursor()
+                                cursor.execute('''
+                                    INSERT INTO routing_decisions (
+                                        decision_id, experiment_id, flow_id, timestamp, risk_before, risk_after,
+                                        original_path, proposed_path, safeguard_result, installation_status,
+                                        verification_status, outcome_status
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ''', (
+                                    decision["decision_id"], decision["experiment_id"], decision["flow_id"],
+                                    decision["timestamp"], decision["risk_before"], decision["risk_after"],
+                                    json.dumps(decision["original_path"]), 
+                                    json.dumps(decision["proposed_path"]) if decision["proposed_path"] else None,
+                                    decision["safeguard_result"], decision["installation_status"],
+                                    decision["verification_status"], decision["outcome_status"]
+                                ))
+                                self.conn.commit()
                         except Exception as e:
                             logging.error(f"Failed to persist decision to SQLite: {e}")
                 finally:

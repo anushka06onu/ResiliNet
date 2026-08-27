@@ -5,8 +5,15 @@ import logging
 import os
 import subprocess
 import time
+from typing import Optional
+from pydantic import BaseModel
 
 import networkx as nx
+
+class RoutingResult(BaseModel):
+    success: bool
+    message: str
+    proposed_path: Optional[list] = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -87,28 +94,28 @@ class PredictiveRouter:
                 max_risk = max(max_risk, self.graph[u][v].get('risk', 0.0))
         return max_risk
 
-    def evaluate_and_reroute(self, flow_id, source, target, current_path, nw_src, nw_dst, priority=100):
+    def evaluate_and_reroute(self, flow_id, source, target, current_path, nw_src, nw_dst, priority=100) -> RoutingResult:
         """
         Safety Checks & Physical Installation Pipeline.
         """
         now = time.time()
         if flow_id in self.last_reroute_time and (now - self.last_reroute_time[flow_id] < self.cooldown):
             logging.info(f"Flow {flow_id} in cooldown. Skipping reroute.")
-            return False, "Cooldown Active", None
+            return RoutingResult(success=False, message="Cooldown Active")
 
         proposed_path = self.calculate_path(source, target)
         if not proposed_path or proposed_path == current_path:
-            return False, "Proposed path identical or unreachable", None
+            return RoutingResult(success=False, message="Proposed path identical or unreachable")
 
         current_risk = self.calculate_path_risk(current_path)
         proposed_risk = self.calculate_path_risk(proposed_path)
 
         if current_risk - proposed_risk < self.min_risk_improvement:
-            return False, f"Risk improvement ({current_risk - proposed_risk:.2f}) below threshold", None
+            return RoutingResult(success=False, message=f"Risk improvement ({current_risk - proposed_risk:.2f}) below threshold")
 
         proposed_reverse_path = self.calculate_path(target, source)
         if not proposed_reverse_path:
-            return False, "Reverse path unreachable", None
+            return RoutingResult(success=False, message="Reverse path unreachable")
 
         # 5. Route installation via OpenFlow and verification
         logging.info(f"Initiating bidirectional route installation for {flow_id}")
@@ -117,10 +124,10 @@ class PredictiveRouter:
         if success:
             self.last_reroute_time[flow_id] = now
             logging.info(f"Successfully rerouted {flow_id}: {current_path} -> {proposed_path}")
-            return True, "Reroute installed successfully", proposed_path
+            return RoutingResult(success=True, message="Reroute installed successfully", proposed_path=proposed_path)
         else:
             logging.error(f"Failed to install OpenFlow rules for {flow_id}")
-            return False, "OpenFlow installation failed", None
+            return RoutingResult(success=False, message="OpenFlow installation failed")
 
     def _install_path(self, path, nw_src, nw_dst, priority, cookie, installed_rules):
         """Helper to install a single directional path and track installed rules for rollback."""

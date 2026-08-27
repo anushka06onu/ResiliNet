@@ -49,13 +49,13 @@ def test_evaluate_and_reroute_success(mock_run, router):
     
     # Reroute from s1 to s3
     current_path = ["s1", "s2"] # dummy
-    success, msg, proposed_path = router.evaluate_and_reroute(
+    result = router.evaluate_and_reroute(
         flow_id="flow_1", source="s1", target="s3", 
         current_path=current_path, nw_src="10.0.0.1", nw_dst="10.0.0.2"
     )
     
-    assert success
-    assert msg == "Reroute installed successfully"
+    assert result.success
+    assert result.message == "Reroute installed successfully"
     
     # Verify subprocess.run calls
     # Should install forward path: s1 -> s2, s2 -> s3
@@ -104,13 +104,13 @@ def test_evaluate_and_reroute_failure_and_rollback(mock_run, router):
     mock_run.side_effect = side_effect
     
     current_path = ["s1", "s2"]
-    success, msg, proposed_path = router.evaluate_and_reroute(
+    result = router.evaluate_and_reroute(
         flow_id="flow_2", source="s1", target="s3", 
         current_path=current_path, nw_src="10.0.0.1", nw_dst="10.0.0.2"
     )
     
-    assert not success
-    assert "failed" in msg.lower()
+    assert not result.success
+    assert "failed" in result.message.lower()
     
     # Verify rollback
     # 2 successful forward adds, 1 failed reverse add -> 3 add-flow calls
@@ -156,13 +156,13 @@ def test_evaluate_and_reroute_verification_failure_and_rollback(mock_run, router
     mock_run.side_effect = side_effect
     
     current_path = ["s1", "s2"]
-    success, msg, proposed_path = router.evaluate_and_reroute(
+    result = router.evaluate_and_reroute(
         flow_id="flow_3", source="s1", target="s3", 
         current_path=current_path, nw_src="10.0.0.1", nw_dst="10.0.0.2"
     )
     
-    assert not success
-    assert "failed" in msg.lower()
+    assert not result.success
+    assert "failed" in result.message.lower()
     
     # 4 successful adds + dump-flows until s2 fails.
     # At rollback, it should issue 4 del-flows commands
