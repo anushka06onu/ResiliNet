@@ -350,16 +350,47 @@ def list_experiments():
             results.append({"id": exp_id, "status": "running"})
 
     for f in glob.glob("experiments/results/*.json"):
-        import os
-        results.append({"id": os.path.basename(f).replace('.json',''), "status": "completed"})
-
     return results
+
+class ExperimentManager:
+    def __init__(self):
+        self.active_processes = {}
+    
+    def start(self, id: str, config: "ExperimentConfig"):
+        if id in self.active_processes and self.active_processes[id].poll() is None:
+            return False
+            
+        experiment_script = Path(project_root) / "experiments" / "run_experiment.py"
+        cmd = ["python3", str(experiment_script), "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed), "--experiment-id", id]
+        proc = subprocess.Popen(cmd, cwd=project_root)
+        self.active_processes[id] = proc
+        return True
+        
+    def stop(self, id: str):
+        if id not in self.active_processes:
+            return False
+            
+        proc = self.active_processes[id]
+        if proc.poll() is None:
+            import signal
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                
+        return True
+        
+    def status(self, id: str):
+        if id in self.active_processes and self.active_processes[id].poll() is None:
+            return "running"
+        return "completed"
+
+experiment_manager = ExperimentManager()
 
 @app.get("/api/v1/experiments/{id}")
 def get_experiment(id: str):
-    if id in active_experiments and active_experiments[id].poll() is None:
-        return {"id": id, "status": "running"}
-    return {"id": id, "status": "completed"}
+    return {"id": id, "status": experiment_manager.status(id)}
 
 class ExperimentConfig(BaseModel):
     scenario: str = "normal"
@@ -375,35 +406,31 @@ def start_experiment(id: str, config: ExperimentConfig = None):
     telemetry_history = []
     prediction_history = []
     orchestrator.routing_decisions = []
-
+    
     if config is None:
         config = ExperimentConfig()
-
-    if id in active_experiments and active_experiments[id].poll() is None:
+        
+    if not experiment_manager.start(id, config):
         return {"status": "error", "message": "Experiment already running"}
-
-    experiment_script = Path(project_root) / "experiments" / "run_experiment.py"
-    cmd = ["python3", str(experiment_script), "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed)]
-    proc = subprocess.Popen(cmd, cwd=project_root)
-    active_experiments[id] = proc
+        
     return {"status": "started", "experiment": id, "scenario": config.scenario}
 
 @app.post("/api/v1/experiments/{id}/pause")
 def pause_experiment(id: str):
-    return {"status": "paused", "experiment": id, "message": "Pause not supported directly in Mininet yet"}
+    # Respond with HTTP 501 Not Implemented instead of misleading status
+    from fastapi import HTTPException
+    raise HTTPException(status_code=501, detail="Pause not supported directly in Mininet yet")
 
 @app.post("/api/v1/experiments/{id}/stop")
 def stop_experiment(id: str):
-    if id in active_experiments and active_experiments[id].poll() is None:
-        import signal
-        active_experiments[id].send_signal(signal.SIGINT)
-
+    experiment_manager.stop(id)
+        
     # Dump artifacts
     import pandas as pd
     import os
     results_dir = Path(project_root) / 'experiments' / 'results'
     os.makedirs(results_dir, exist_ok=True)
-
+    
     if telemetry_history:
         pd.DataFrame(telemetry_history).to_csv(results_dir / f"{id}_telemetry.csv", index=False)
     if prediction_history:
@@ -413,7 +440,7 @@ def stop_experiment(id: str):
         with open(results_dir / f"{id}_routing_decisions.jsonl", "w") as f:
             for decision in orchestrator.routing_decisions:
                 f.write(json.dumps(decision) + "\n")
-
+                
     return {"status": "stopped", "experiment": id}
 
 @app.get("/api/v1/replay/{experiment_id}")
