@@ -580,7 +580,11 @@ class ExperimentManager:
 experiment_manager = ExperimentManager()
 
 @app.get("/api/v1/experiments")
-def list_experiments():
+def list_experiments(
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
     results = {}
 
     # Add finished from results directory
@@ -610,7 +614,10 @@ def list_experiments():
                 "status": "running"
             }
 
-    return list(results.values())
+    exp_list = list(results.values())
+    if status:
+        exp_list = [e for e in exp_list if e.get("status") == status]
+    return exp_list[offset:offset+limit]
 
 @app.get("/api/v1/experiments/{id}")
 def get_experiment(id: str):
@@ -680,6 +687,36 @@ def stop_experiment(id: str):
             f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
 
     return {"status": "stopped", "experiment": id}
+
+@app.get("/api/v1/telemetry/history")
+def get_telemetry_history(
+    switch_id: Optional[str] = None,
+    port_no: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    global telemetry_history
+    records = telemetry_history
+    if switch_id:
+        records = [r for r in records if r.get("switch_id") == switch_id]
+    if port_no:
+        records = [r for r in records if str(r.get("port_no")) == str(port_no)]
+    return records[offset:offset+limit]
+
+@app.get("/api/v1/predictions/history")
+def get_predictions_history(
+    switch_id: Optional[str] = None,
+    port_no: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    global prediction_history
+    records = prediction_history
+    if switch_id:
+        records = [r for r in records if r.get("switch_id") == switch_id]
+    if port_no:
+        records = [r for r in records if str(r.get("port_no")) == str(port_no)]
+    return records[offset:offset+limit]
 
 @app.get("/api/v1/replay/{experiment_id}")
 def replay_experiment(experiment_id: str):

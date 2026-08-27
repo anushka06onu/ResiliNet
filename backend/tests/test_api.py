@@ -72,3 +72,19 @@ def test_health_endpoints():
     assert ready_res.status_code == 200
     assert ready_res.json()["status"] == "ready"
     assert ready_res.json()["components"]["database_connected"] is True
+
+def test_paginated_endpoints():
+    # Experiments pagination
+    exp_res = client.get("/api/v1/experiments?limit=5&offset=0")
+    assert exp_res.status_code == 200
+    assert isinstance(exp_res.json(), list)
+
+    # Telemetry history pagination
+    tel_res = client.get("/api/v1/telemetry/history?limit=10&offset=0")
+    assert tel_res.status_code == 200
+    assert isinstance(tel_res.json(), list)
+
+    # Predictions history pagination
+    pred_res = client.get("/api/v1/predictions/history?limit=10&offset=0")
+    assert pred_res.status_code == 200
+    assert isinstance(pred_res.json(), list)
