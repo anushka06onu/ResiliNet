@@ -29,10 +29,21 @@ def router():
 
 @patch('network.routing.predictive_routing.subprocess.run')
 def test_evaluate_and_reroute_success(mock_run, router):
-    # Setup mock to always return success
-    mock_res = MagicMock()
-    mock_res.returncode = 0
-    mock_run.return_value = mock_res
+    import hashlib
+    cookie = int(hashlib.md5(b"flow_1").hexdigest()[:8], 16)
+    cookie_hex = hex(cookie)
+    
+    def side_effect(cmd, **kwargs):
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        if "dump-flows" in cmd:
+            # We output all possible variations so it passes verification for any node
+            mock_res.stdout = f"cookie={cookie_hex}, priority=100, nw_src=10.0.0.1, nw_dst=10.0.0.2, actions=output:1 \n \
+                                cookie={cookie_hex}, priority=100, nw_src=10.0.0.1, nw_dst=10.0.0.2, actions=output:3 \n \
+                                cookie={cookie_hex}, priority=100, nw_src=10.0.0.2, nw_dst=10.0.0.1, actions=output:4 \n \
+                                cookie={cookie_hex}, priority=100, nw_src=10.0.0.2, nw_dst=10.0.0.1, actions=output:2".encode()
+        return mock_res
+    mock_run.side_effect = side_effect
     
     # Reroute from s1 to s3
     current_path = ["s1", "s2"] # dummy
@@ -47,7 +58,8 @@ def test_evaluate_and_reroute_success(mock_run, router):
     # Verify subprocess.run calls
     # Should install forward path: s1 -> s2, s2 -> s3
     # Should install reverse path: s3 -> s2, s2 -> s1
-    assert mock_run.call_count == 4
+    # Plus 4 dump-flows calls for verification
+    assert mock_run.call_count == 8
     
     calls = mock_run.call_args_list
     forward_1 = " ".join(calls[0][0][0])
@@ -110,8 +122,49 @@ def test_evaluate_and_reroute_failure_and_rollback(mock_run, router):
     rollback_1 = " ".join(calls[3][0][0])
     rollback_2 = " ".join(calls[4][0][0])
     
+    import hashlib
+    cookie = int(hashlib.md5(b"flow_2").hexdigest()[:8], 16)
+    
     assert "del-flows" in rollback_1 and "s1" in rollback_1
-    assert "nw_src=10.0.0.1" in rollback_1 and "nw_dst=10.0.0.2" in rollback_1
+    assert f"cookie={cookie}/-1" in rollback_1
     
     assert "del-flows" in rollback_2 and "s2" in rollback_2
-    assert "nw_src=10.0.0.1" in rollback_2 and "nw_dst=10.0.0.2" in rollback_2
+    assert f"cookie={cookie}/-1" in rollback_2
+
+
+@patch('network.routing.predictive_routing.subprocess.run')
+def test_evaluate_and_reroute_verification_failure_and_rollback(mock_run, router):
+    # Setup mock to succeed on all add-flows but fail on the dump-flows verification for s2
+    def side_effect(cmd, **kwargs):
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        if "dump-flows" in cmd:
+            if "s2" in cmd:
+                # Missing output action to trigger failure
+                mock_res.stdout = b"cookie=0x1234, priority=100, nw_src=10.0.0.1, nw_dst=10.0.0.2"
+            else:
+                import hashlib
+                cookie = int(hashlib.md5(b"flow_3").hexdigest()[:8], 16)
+                cookie_hex = hex(cookie)
+                mock_res.stdout = f"cookie={cookie_hex}, priority=100, nw_src=10.0.0.1, nw_dst=10.0.0.2, actions=output:1 \n \
+                                    cookie={cookie_hex}, priority=100, nw_src=10.0.0.2, nw_dst=10.0.0.1, actions=output:4".encode()
+        return mock_res
+        
+    mock_run.side_effect = side_effect
+    
+    current_path = ["s1", "s2"]
+    success, msg = router.evaluate_and_reroute(
+        flow_id="flow_3", source="s1", target="s3", 
+        current_path=current_path, nw_src="10.0.0.1", nw_dst="10.0.0.2"
+    )
+    
+    assert not success
+    assert "failed" in msg.lower()
+    
+    # 4 successful adds + dump-flows until s2 fails.
+    # At rollback, it should issue 4 del-flows commands
+    # So we should see del-flows being called.
+    calls = mock_run.call_args_list
+    rollbacks = [c for c in calls if "del-flows" in c[0][0]]
+    assert len(rollbacks) == 4
+

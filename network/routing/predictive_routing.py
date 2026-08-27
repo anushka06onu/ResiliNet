@@ -109,8 +109,9 @@ class PredictiveRouter:
         if not proposed_reverse_path:
             return False, "Reverse path unreachable"
 
-        # Safety checks passed. Execute physical installation.
-        success = self.install_bidirectional_route(proposed_path, proposed_reverse_path, nw_src, nw_dst, priority)
+        # 5. Route installation via OpenFlow and verification
+        logging.info(f"Initiating bidirectional route installation for {flow_id}")
+        success = self.install_bidirectional_route(proposed_path, proposed_reverse_path, nw_src, nw_dst, flow_id, priority)
         
         if success:
             self.last_reroute_time[flow_id] = now
@@ -120,7 +121,7 @@ class PredictiveRouter:
             logging.error(f"Failed to install OpenFlow rules for {flow_id}")
             return False, "OpenFlow installation failed"
 
-    def _install_path(self, path, nw_src, nw_dst, priority, installed_rules):
+    def _install_path(self, path, nw_src, nw_dst, priority, cookie, installed_rules):
         """Helper to install a single directional path and track installed rules for rollback."""
         for i in range(len(path) - 1):
             current_node = path[i]
@@ -134,33 +135,36 @@ class PredictiveRouter:
             if 'switch' in self.graph.nodes[current_node].get('type', 'switch'):
                 cmd = [
                     "sudo", "ovs-ofctl", "add-flow", current_node,
-                    f"priority={priority},ip,nw_src={nw_src},nw_dst={nw_dst},actions=output:{out_port}"
+                    f"cookie={cookie},priority={priority},ip,nw_src={nw_src},nw_dst={nw_dst},actions=output:{out_port}"
                 ]
                 res = subprocess.run(cmd, capture_output=True)
                 if res.returncode != 0:
                     logging.error(f"Failed to install flow on {current_node}: {res.stderr.decode('utf-8')}")
                     return False
-                installed_rules.append((current_node, nw_src, nw_dst, priority))
+                installed_rules.append((current_node, nw_src, nw_dst, priority, cookie, out_port))
         return True
 
-    def install_bidirectional_route(self, forward_path, reverse_path, nw_src, nw_dst, priority=100):
+    def install_bidirectional_route(self, forward_path, reverse_path, nw_src, nw_dst, flow_id, priority=100):
         """
         Physically injects OpenFlow rules into OVS switches along both paths.
         Implements rollback if any installation fails.
         """
         installed_rules = []
+        import hashlib
+        # Generate a unique integer cookie based on the flow_id
+        cookie = int(hashlib.md5(flow_id.encode()).hexdigest()[:8], 16)
         try:
             # Install forward path
-            if not self._install_path(forward_path, nw_src, nw_dst, priority, installed_rules):
+            if not self._install_path(forward_path, nw_src, nw_dst, priority, cookie, installed_rules):
                 self._rollback_rules(installed_rules)
                 return False
                 
             # Install reverse path (swap nw_src and nw_dst)
-            if not self._install_path(reverse_path, nw_dst, nw_src, priority, installed_rules):
+            if not self._install_path(reverse_path, nw_dst, nw_src, priority, cookie, installed_rules):
                 self._rollback_rules(installed_rules)
                 return False
                 
-            # Verify routing through counters
+            # Post-installation flow-table verification
             if not self._verify_installed_rules(installed_rules):
                 self._rollback_rules(installed_rules)
                 return False
@@ -172,17 +176,23 @@ class PredictiveRouter:
             return False
 
     def _verify_installed_rules(self, installed_rules):
-        """Verify that the flows were successfully committed to the switch tables."""
+        """Post-installation flow-table verification."""
         for rule in installed_rules:
-            current_node, nw_src, nw_dst, _ = rule
+            current_node, nw_src, nw_dst, priority, cookie, out_port = rule
             cmd = ["sudo", "ovs-ofctl", "dump-flows", current_node]
             res = subprocess.run(cmd, capture_output=True)
             if res.returncode != 0:
                 logging.error(f"Failed to dump flows for verification on {current_node}")
                 return False
             output = res.stdout.decode('utf-8')
-            # Check if our exact src/dst IP match is in the flow table
-            if f"nw_src={nw_src}" not in output or f"nw_dst={nw_dst}" not in output:
+            
+            # Check for exact matches on cookie, priority, IPs, and output port
+            cookie_hex = hex(cookie)
+            if (f"cookie={cookie_hex}" not in output or 
+                f"priority={priority}" not in output or
+                f"nw_src={nw_src}" not in output or 
+                f"nw_dst={nw_dst}" not in output or
+                f"actions=output:{out_port}" not in output):
                 logging.error(f"Flow verification failed on {current_node}: Rule not found in dump")
                 return False
         return True
@@ -191,10 +201,10 @@ class PredictiveRouter:
         """Rollback successfully installed rules if a later rule fails."""
         logging.info("Rolling back partially installed OpenFlow rules...")
         for rule in installed_rules:
-            current_node, nw_src, nw_dst, priority = rule
+            current_node, nw_src, nw_dst, _, cookie, _ = rule
             cmd = [
                 "sudo", "ovs-ofctl", "del-flows", current_node,
-                f"ip,nw_src={nw_src},nw_dst={nw_dst}"
+                f"cookie={cookie}/-1"
             ]
             subprocess.run(cmd, capture_output=True)
 
