@@ -165,6 +165,9 @@ async def ingest_telemetry(payload: TelemetryPayload):
         event["payload"]["prediction_status"] = "inference_failed"
         print(f"Prediction exception: {e}")
 
+    # Pass the event to the Orchestrator to evaluate flows and routing
+    orchestrator.handle_telemetry_event(event)
+
     await manager.broadcast(event)
     return {"status": "ingested"}
 
@@ -178,10 +181,13 @@ async def startup_event():
 # ---------------------------------------------------------
 active_live_topology = None
 
+from app.services.orchestrator import orchestrator
+
 @app.post("/api/v1/topology/ingest")
 async def ingest_topology(payload: dict):
     global active_live_topology
     active_live_topology = payload
+    orchestrator.load_topology(payload)
     return {"status": "topology_ingested"}
 
 @app.get("/api/v1/system/status")
@@ -292,38 +298,32 @@ def get_latest_prediction(link_id: str):
 # ---------------------------------------------------------
 @app.get("/api/v1/flows")
 def list_active_flows():
-    return [
-        {"flow_id": "f_1", "src": "h1", "dst": "h4", "tier": "Critical", "sla_status": "Healthy"},
-        {"flow_id": "f_2", "src": "h2", "dst": "h3", "tier": "Background", "sla_status": "Violated"}
-    ]
+    # Return actual flows from orchestrator
+    flows = list(orchestrator.flows.values())
+    if not flows:
+        return []
+    return flows
 
 @app.get("/api/v1/flows/{flow_id}")
 def get_flow_details(flow_id: str):
-    return {"flow_id": flow_id, "path": ["s1", "s3", "s4"], "latency_ms": 12.4}
-
-# ---------------------------------------------------------
-# Predictive & Routing Intelligence
-# ---------------------------------------------------------
-@app.get("/api/v1/predictions")
-def get_all_predictions():
-    return [{"link_id": "s2-s4", "risk": 0.85, "horizon": "30s"}]
-
-@app.get("/api/v1/predictions/{prediction_id}/explanation")
-def get_prediction_explanation(prediction_id: str):
-    # Would return SHAP logic
-    return {"features": [{"name": "loss_mean_30s", "contribution": 0.45}]}
-
-@app.get("/api/v1/routing/decisions")
-def get_routing_decisions():
-    return [
-        {
-            "flow_id": "f_1",
-            "original_path": ["s1", "s2", "s4"],
-            "proposed_path": ["s1", "s3", "s4"],
-            "reason": "Link s2-s4 predicted risk 0.85",
-            "applied": True
+    if flow_id in orchestrator.flows:
+        flow = orchestrator.flows[flow_id]
+        return {
+            "flow_id": flow_id,
+            "src": flow["src"],
+            "dst": flow["dst"],
+            "current_path": flow["current_path"],
+            "sla": {"max_latency_ms": 20, "max_loss_percent": 1.0},
+            "metrics": {"latency_ms": 15, "loss_percent": 0.0} # Needs real metrics
         }
-    ]
+    return {"error": "Flow not found"}
+
+# ---------------------------------------------------------
+# Routing Decisions Endpoints
+# ---------------------------------------------------------
+@app.get("/api/v1/routing/decisions")
+def list_routing_decisions():
+    return orchestrator.routing_decisions
 
 # ---------------------------------------------------------
 # Experiment Control & Replay
