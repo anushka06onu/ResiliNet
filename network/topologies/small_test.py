@@ -121,13 +121,11 @@ def create_small_network():
         writer.writerows(results)
     
     info(f'*** Results saved to {csv_file}\n')
-
-    # info('*** Running CLI\n')
-    # CLI(net)
-
-    info('*** Stopping network\n')
-    net.stop()
+    return net
 
 if __name__ == '__main__':
     setLogLevel('info')
-    create_small_network()
+    net = create_small_network()
+    
+    info('*** Stopping network\n')
+    net.stop()
