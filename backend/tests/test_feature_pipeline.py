@@ -7,7 +7,7 @@ from data_pipeline.feature_engineering import FeaturePipeline
 
 
 def test_feature_pipeline_insufficient_data():
-    pipeline = FeaturePipeline()
+    pipeline = FeaturePipeline(window_seconds=2.5)
     
     metrics = {
         "rx_bytes": 1000,

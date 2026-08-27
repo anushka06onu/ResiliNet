@@ -37,6 +37,9 @@ class FeaturePipeline:
             "metrics": raw_metrics
         }
         history.append(entry)
+        
+        # Ensure ordering
+        history.sort(key=lambda x: x["timestamp"])
 
         # Global Trim: Trim history for ALL links by time window
         cutoff_time = timestamp - timedelta(seconds=self.window_seconds)
@@ -55,9 +58,13 @@ class FeaturePipeline:
             return {"status": "INSUFFICIENT_DATA"}
             
         history = self.link_history[link_id]
+        
+        # Check if we have enough time coverage (at least 80% of window)
+        time_coverage = (history[-1]["timestamp"] - history[0]["timestamp"]).total_seconds()
+        if time_coverage < (self.window_seconds * 0.8):
+            return {"status": "INSUFFICIENT_DATA"}
 
         # Calculate features over the window
-
         return self._compute_features(history)
 
     def _compute_features(self, history):
@@ -65,7 +72,15 @@ class FeaturePipeline:
             return {"status": "INSUFFICIENT_DATA"}
 
         # Extract series
-        loss_series = [h["metrics"].get("loss_percent", 0.0) for h in history]
+        def _safe_float(val, default=0.0):
+            try:
+                if val is None or np.isnan(float(val)):
+                    return default
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
+        loss_series = [_safe_float(h["metrics"].get("loss_percent", 0.0)) for h in history]
 
         # Compute counter differences safely (handling wraparounds/resets)
         def _get_diff(series):
@@ -77,13 +92,13 @@ class FeaturePipeline:
                 diffs.append(diff)
             return diffs
 
-        tx_dropped_raw = [h["metrics"].get("tx_dropped", 0) for h in history]
+        tx_dropped_raw = [_safe_float(h["metrics"].get("tx_dropped", 0)) for h in history]
         tx_dropped_diffs = _get_diff(tx_dropped_raw)
 
-        rx_bytes_raw = [h["metrics"].get("rx_bytes", 0) for h in history]
+        rx_bytes_raw = [_safe_float(h["metrics"].get("rx_bytes", 0)) for h in history]
         rx_bytes_diffs = _get_diff(rx_bytes_raw)
 
-        tx_bytes_raw = [h["metrics"].get("tx_bytes", 0) for h in history]
+        tx_bytes_raw = [_safe_float(h["metrics"].get("tx_bytes", 0)) for h in history]
         tx_bytes_diffs = _get_diff(tx_bytes_raw)
 
         # Compute aggregates
@@ -119,8 +134,8 @@ class FeaturePipeline:
             "status": "OK",
             "loss_mean_30s": loss_mean_30s,
             "tx_dropped_max": tx_dropped_max,
-            "control_plane_rtt_ms": latest.get("control_plane_rtt_ms", 0.0),
+            "control_plane_rtt_ms": _safe_float(latest.get("control_plane_rtt_ms", 0.0)),
             "rx_bytes_slope": rx_bytes_slope,
             "tx_bytes_rate": tx_bytes_rate,
-            "utilization": latest.get("utilization", 0.0)
+            "utilization": _safe_float(latest.get("utilization", 0.0))
         }

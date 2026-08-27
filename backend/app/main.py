@@ -467,6 +467,7 @@ def start_experiment(id: str, config: ExperimentConfig = None):
     telemetry_history = []
     prediction_history = []
     orchestrator.routing_decisions = []
+    feature_pipeline.link_history.clear()
     
 
     if config is None:
