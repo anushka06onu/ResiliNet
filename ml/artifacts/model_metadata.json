@@ -1,0 +1,17 @@
+{
+  "model_version": "1.1.0",
+  "feature_schema_version": "v1.1",
+  "feature_names": [
+    "loss_mean_30s",
+    "tx_dropped_max",
+    "control_plane_rtt_ms",
+    "rx_bytes_slope",
+    "tx_bytes_rate"
+  ],
+  "training_data_hash": "sha256:4a9c8b7f6e5d",
+  "training_commit": "e2f9d10",
+  "decision_threshold": 0.79,
+  "calibration_version": "platt_v1",
+  "creation_time": "2026-08-27T12:00:00Z",
+  "data_origin": "synthetic"
+}

@@ -1,20 +1,39 @@
-import os
-import sqlite3
-import sys
+from pathlib import Path
+from app.db.database import DatabaseManager
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from backend.app.services.orchestrator import Orchestrator
+def test_database_manager(tmp_path):
+    test_db = tmp_path / "test_resilinet.db"
+    db = DatabaseManager(db_path=test_db)
+    db.initialize_db()
 
+    decision = {
+        "decision_id": "dec-101",
+        "experiment_id": "exp-001",
+        "flow_id": "f_1",
+        "timestamp": "2026-08-27T12:00:00Z",
+        "risk_before": 0.8,
+        "risk_after": 0.1,
+        "original_path": ["s1", "s2"],
+        "proposed_path": ["s1", "s3", "s2"],
+        "safeguard_result": "OK",
+        "installation_status": "success",
+        "verification_status": "success",
+        "outcome_status": "success",
+        "failure_stage": None,
+        "error_type": None,
+        "rollback_result": None
+    }
 
-def test_sqlite_persistence():
-    orchestrator = Orchestrator()
-    # Check if DB was created
-    assert os.path.exists(orchestrator.db_path)
-    
-    # Check table
-    conn = sqlite3.connect(orchestrator.db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='routing_decisions';")
-    assert cursor.fetchone() is not None
-    conn.close()
+    db.record_decision(decision)
 
+    # Query with filters
+    results = db.query_decisions(experiment_id="exp-001")
+    assert len(results) == 1
+    assert results[0]["decision_id"] == "dec-101"
+    assert results[0]["proposed_path"] == ["s1", "s3", "s2"]
+
+    # Filter with non-matching outcome
+    empty_results = db.query_decisions(outcome="failed")
+    assert len(empty_results) == 0
+
+    db.close()

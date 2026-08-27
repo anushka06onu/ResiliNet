@@ -41,8 +41,8 @@ class TopologySchema(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    from app.services.orchestrator import orchestrator
-    orchestrator.initialize_db()
+    from app.db.database import db_manager
+    db_manager.initialize_db()
     yield
     # Shutdown
     for ws in list(manager.active_connections):
@@ -57,8 +57,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     try:
-        if hasattr(orchestrator, 'conn') and orchestrator.conn:
-            orchestrator.conn.close()
+        db_manager.close()
     except Exception:
         pass
 
@@ -427,51 +426,15 @@ def list_routing_decisions(
     limit: int = 100,
     offset: int = 0
 ):
+    from app.db.database import db_manager
     try:
-        with orchestrator.db_lock:
-            cursor = orchestrator.conn.cursor()
-            query = """
-                SELECT decision_id, experiment_id, flow_id, timestamp, risk_before, risk_after,
-                       original_path, proposed_path, safeguard_result, installation_status,
-                       verification_status, outcome_status, failure_stage, error_type, rollback_result
-                FROM routing_decisions
-                WHERE 1=1
-            """
-            params = []
-            if experiment_id:
-                query += " AND experiment_id = ?"
-                params.append(experiment_id)
-            if flow_id:
-                query += " AND flow_id = ?"
-                params.append(flow_id)
-            if outcome:
-                query += " AND outcome_status = ?"
-                params.append(outcome)
-            query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
-
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
-            decisions = []
-            for r in rows:
-                decisions.append({
-                    "decision_id": r[0],
-                    "experiment_id": r[1],
-                    "flow_id": r[2],
-                    "timestamp": r[3],
-                    "risk_before": r[4],
-                    "risk_after": r[5],
-                    "original_path": json.loads(r[6]) if r[6] else None,
-                    "proposed_path": json.loads(r[7]) if r[7] else None,
-                    "safeguard_result": r[8],
-                    "installation_status": r[9],
-                    "verification_status": r[10],
-                    "outcome_status": r[11],
-                    "failure_stage": r[12],
-                    "error_type": r[13],
-                    "rollback_result": r[14]
-                })
-            return decisions
+        return db_manager.query_decisions(
+            experiment_id=experiment_id,
+            flow_id=flow_id,
+            outcome=outcome,
+            limit=limit,
+            offset=offset
+        )
     except Exception as e:
         logging.error(f"Error reading routing decisions from DB: {e}")
         res = orchestrator.routing_decisions

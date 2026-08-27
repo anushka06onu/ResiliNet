@@ -15,34 +15,48 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[3]
 MODEL_PATH = ROOT / "ml" / "artifacts" / "lightgbm_model.txt"
 EVAL_PATH = ROOT / "ml" / "artifacts" / "evaluation_report.json"
+META_PATH = ROOT / "ml" / "artifacts" / "model_metadata.json"
 DECISION_THRESHOLD = 0.5
 MODEL_LOADED = False
 EXPLAINER_LOADED = False
+MODEL_METADATA = None
 
 model = None
 explainer = None
 
-# 1. Attempt to load the LightGBM model for pure inference
+# 1. Attempt to load the LightGBM model and validate metadata
 try:
     import lightgbm as lgb
+    from ml.schema import MODEL_FEATURES, CURRENT_FEATURE_SCHEMA_VERSION, ModelMetadata
 
-    from ml.schema import MODEL_FEATURES
-    
     if MODEL_PATH.exists():
+        # Validate metadata if present
+        if META_PATH.exists():
+            with open(META_PATH, "r") as f:
+                meta_dict = json.load(f)
+                MODEL_METADATA = ModelMetadata(**meta_dict)
+                if MODEL_METADATA.feature_schema_version != CURRENT_FEATURE_SCHEMA_VERSION:
+                    raise ValueError(
+                        f"Incompatible model schema version: {MODEL_METADATA.feature_schema_version} "
+                        f"(expected {CURRENT_FEATURE_SCHEMA_VERSION})"
+                    )
+                DECISION_THRESHOLD = MODEL_METADATA.decision_threshold
+
         model = lgb.Booster(model_file=str(MODEL_PATH))
         MODEL_LOADED = True
-        
-        try:
-            with open(EVAL_PATH, "r") as f:
-                eval_data = json.load(f)
-                DECISION_THRESHOLD = eval_data.get("evaluation_metadata", {}).get("lgbm_optimal_threshold", 0.5)
-        except Exception:
-            pass
-            
+
+        if not MODEL_METADATA and EVAL_PATH.exists():
+            try:
+                with open(EVAL_PATH, "r") as f:
+                    eval_data = json.load(f)
+                    DECISION_THRESHOLD = eval_data.get("evaluation_metadata", {}).get("lgbm_optimal_threshold", 0.5)
+            except Exception:
+                pass
     else:
         print(f"Warning: Model file not found at {MODEL_PATH}")
 except Exception as e:
-    print(f"Warning: Failed to load LightGBM model: {e}")
+    MODEL_LOADED = False
+    print(f"Warning: Failed to load/validate LightGBM model: {e}")
 
 # 2. Attempt to load the Explainer (optional)
 if MODEL_LOADED:

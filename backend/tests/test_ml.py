@@ -43,8 +43,21 @@ def test_future_label_boundaries():
         return group
     
     df = df.groupby('experiment_id', group_keys=False).apply(small_future_violations)
-    
+
     exp_2 = df[df['experiment_id'] == 'exp_2']
-    
-    # Exp 2 should NOT see any violations, despite exp 1 having one right before it.
     assert exp_2['sla_violated_in_horizon'].sum() == 0.0, "Leakage occurred across experiment boundary!"
+
+def test_model_metadata_validation():
+    from ml.schema import ModelMetadata, CURRENT_FEATURE_SCHEMA_VERSION
+    import json
+    meta_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../ml/artifacts/model_metadata.json'))
+    if not os.path.exists(meta_path):
+        pytest.skip("Model metadata not found.")
+
+    with open(meta_path, "r") as f:
+        data = json.load(f)
+
+    meta = ModelMetadata(**data)
+    assert meta.feature_schema_version == CURRENT_FEATURE_SCHEMA_VERSION
+    assert meta.decision_threshold > 0.0
+    assert len(meta.feature_names) == 5

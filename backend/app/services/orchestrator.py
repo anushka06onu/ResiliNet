@@ -31,39 +31,14 @@ class Orchestrator:
         self.policy = "predictive"
         self.active_experiment_id = None
 
-        # SQLite Persistence
-        import sqlite3
-        self.db_path = project_root / 'experiments' / 'results' / 'resilinet.db'
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Initialization moved to initialize_db() called during app startup
-        self.conn = None
-        self.db_lock = threading.Lock()
+        self.routing_decisions = []
+        self.policy = "predictive"
+        self.active_experiment_id = None
+        from app.db.database import db_manager
+        self.db_manager = db_manager
 
     def initialize_db(self):
-        import sqlite3
-        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-        with self.db_lock:
-            cursor = self.conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS routing_decisions (
-                    decision_id TEXT PRIMARY KEY,
-                    experiment_id TEXT,
-                    flow_id TEXT,
-                    timestamp TEXT,
-                    risk_before REAL,
-                    risk_after REAL,
-                    original_path TEXT,
-                    proposed_path TEXT,
-                    safeguard_result TEXT,
-                    installation_status TEXT,
-                    verification_status TEXT,
-                    outcome_status TEXT,
-                    failure_stage TEXT,
-                    error_type TEXT,
-                    rollback_result TEXT
-                )
-            ''')
-            self.conn.commit()
+        self.db_manager.initialize_db()
 
     def set_policy(self, policy: str):
         self.policy = policy
@@ -284,28 +259,8 @@ class Orchestrator:
                             flow["sla_status"] = "Violated"
 
                         self.routing_decisions.append(decision)
-
-                        # Persist to SQLite
-                        import json
                         try:
-                            with self.db_lock:
-                                cursor = self.conn.cursor()
-                                cursor.execute('''
-                                    INSERT INTO routing_decisions (
-                                        decision_id, experiment_id, flow_id, timestamp, risk_before, risk_after,
-                                        original_path, proposed_path, safeguard_result, installation_status,
-                                        verification_status, outcome_status, failure_stage, error_type, rollback_result
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                ''', (
-                                    decision["decision_id"], decision["experiment_id"], decision["flow_id"],
-                                    decision["timestamp"], decision["risk_before"], decision["risk_after"],
-                                    json.dumps(decision["original_path"]),
-                                    json.dumps(decision["proposed_path"]) if decision["proposed_path"] else None,
-                                    decision["safeguard_result"], decision["installation_status"],
-                                    decision["verification_status"], decision["outcome_status"],
-                                    decision["failure_stage"], decision["error_type"], decision["rollback_result"]
-                                ))
-                                self.conn.commit()
+                            self.db_manager.record_decision(decision)
                         except Exception as e:
                             logging.error(f"Failed to persist decision to SQLite: {e}")
                 finally:
