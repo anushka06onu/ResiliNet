@@ -25,16 +25,16 @@ function App() {
   useEffect(() => {
     const WS_BASE = import.meta.env.VITE_WS_BASE_URL ?? 'ws://localhost:8000/api/v1/stream';
     const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
-    
+
     // Establish WebSocket Connection
     const ws = new WebSocket(WS_BASE);
-    
+
     ws.onopen = () => {
       setWsConnected(true);
       // Fetch system status via REST on connect
       fetch(`${API_BASE}/system/status`)
-        .then(r => r.json())
-        .then(data => setSystemStatus(data.status, data.version, data.active_connections))
+        .then((r) => r.json())
+        .then((data) => setSystemStatus(data.status, data.version, data.active_connections))
         .catch(() => setSystemStatus('DEMO DATA', 'Frontend Demo', 0));
     };
 
@@ -64,14 +64,70 @@ function App() {
     <Router>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Suspense fallback={<Loader />}><NetworkOverview /></Suspense>} />
-          <Route path="twin" element={<Suspense fallback={<Loader />}><DigitalTwin /></Suspense>} />
-          <Route path="flows" element={<Suspense fallback={<Loader />}><FlowMonitor /></Suspense>} />
-          <Route path="intelligence" element={<Suspense fallback={<Loader />}><Intelligence /></Suspense>} />
-          <Route path="routing" element={<Suspense fallback={<Loader />}><RoutingDecisions /></Suspense>} />
-          <Route path="control" element={<Suspense fallback={<Loader />}><ExperimentControl /></Suspense>} />
-          <Route path="methodology" element={<Suspense fallback={<Loader />}><Methodology /></Suspense>} />
-          <Route path="health" element={<Suspense fallback={<Loader />}><SystemHealth /></Suspense>} />
+          <Route
+            index
+            element={
+              <Suspense fallback={<Loader />}>
+                <NetworkOverview />
+              </Suspense>
+            }
+          />
+          <Route
+            path="twin"
+            element={
+              <Suspense fallback={<Loader />}>
+                <DigitalTwin />
+              </Suspense>
+            }
+          />
+          <Route
+            path="flows"
+            element={
+              <Suspense fallback={<Loader />}>
+                <FlowMonitor />
+              </Suspense>
+            }
+          />
+          <Route
+            path="intelligence"
+            element={
+              <Suspense fallback={<Loader />}>
+                <Intelligence />
+              </Suspense>
+            }
+          />
+          <Route
+            path="routing"
+            element={
+              <Suspense fallback={<Loader />}>
+                <RoutingDecisions />
+              </Suspense>
+            }
+          />
+          <Route
+            path="control"
+            element={
+              <Suspense fallback={<Loader />}>
+                <ExperimentControl />
+              </Suspense>
+            }
+          />
+          <Route
+            path="methodology"
+            element={
+              <Suspense fallback={<Loader />}>
+                <Methodology />
+              </Suspense>
+            }
+          />
+          <Route
+            path="health"
+            element={
+              <Suspense fallback={<Loader />}>
+                <SystemHealth />
+              </Suspense>
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

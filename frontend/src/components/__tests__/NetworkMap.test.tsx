@@ -19,7 +19,10 @@ describe('NetworkMap', () => {
   it('loads and transforms topology edges correctly', async () => {
     // Mock the topology response
     vi.mocked(api.getTopology).mockResolvedValue({
-      nodes: [{ id: 's1', type: 'switch' }, { id: 's2', type: 'switch' }],
+      nodes: [
+        { id: 's1', type: 'switch' },
+        { id: 's2', type: 'switch' },
+      ],
       links: [
         {
           source: 's1',

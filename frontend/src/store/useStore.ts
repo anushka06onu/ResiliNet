@@ -27,42 +27,45 @@ export const useStore = create<SystemState>((set) => ({
   telemetryHistory: [],
   linkStates: {},
   dataMode: 'DISCONNECTED',
-  setSystemStatus: (status, version, connections) => set({ systemStatus: status, version, activeConnections: connections, dataMode: status }),
+  setSystemStatus: (status, version, connections) =>
+    set({ systemStatus: status, version, activeConnections: connections, dataMode: status }),
   setTopology: (topo) => set({ currentTopology: topo }),
   setWsConnected: (connected) => set({ wsConnected: connected }),
-  updateTelemetry: (event) => set((state) => {
-    const { link_id, utilization, loss_rate, predicted_risk, latency_ms } = event.payload || {};
-    
-    // Update link state
-    const newLinkStates = { ...state.linkStates };
-    if (link_id) {
+  updateTelemetry: (event) =>
+    set((state) => {
+      const { link_id, utilization, loss_rate, predicted_risk, latency_ms } = event.payload || {};
+
+      // Update link state
+      const newLinkStates = { ...state.linkStates };
+      if (link_id) {
         newLinkStates[link_id] = {
-            utilization,
-            loss_rate,
-            predicted_risk,
-            latency_ms,
-            timestamp: event.timestamp
+          utilization,
+          loss_rate,
+          predicted_risk,
+          latency_ms,
+          timestamp: event.timestamp,
         };
-    }
-    
-    // Keep last 100 events in history
-    const newHistory = [event, ...state.telemetryHistory].slice(0, 100);
-    
-    return {
+      }
+
+      // Keep last 100 events in history
+      const newHistory = [event, ...state.telemetryHistory].slice(0, 100);
+
+      return {
         latestTelemetry: event,
         telemetryHistory: newHistory,
         linkStates: newLinkStates,
-        dataMode: event.mode || state.dataMode
-    };
-  }),
-  checkDataModeExpiry: () => set((state) => {
-    if (state.dataMode === 'LIVE LAB' && state.latestTelemetry) {
-      const timestamp = new Date(state.latestTelemetry.timestamp).getTime();
-      const age = Date.now() - timestamp;
-      if (age > 15000) {
-        return { dataMode: 'DEMO DATA' };
+        dataMode: event.mode || state.dataMode,
+      };
+    }),
+  checkDataModeExpiry: () =>
+    set((state) => {
+      if (state.dataMode === 'LIVE LAB' && state.latestTelemetry) {
+        const timestamp = new Date(state.latestTelemetry.timestamp).getTime();
+        const age = Date.now() - timestamp;
+        if (age > 15000) {
+          return { dataMode: 'DEMO DATA' };
+        }
       }
-    }
-    return state;
-  }),
+      return state;
+    }),
 }));

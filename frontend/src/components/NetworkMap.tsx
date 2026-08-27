@@ -25,7 +25,7 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
 
         topoData.nodes.forEach((n: any) => {
           elements.push({
-            data: { id: n.id, label: n.id, type: n.type }
+            data: { id: n.id, label: n.id, type: n.type },
           });
         });
 
@@ -36,8 +36,8 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
               source: l.source,
               target: l.target,
               source_port: String(l.source_port),
-              target_port: String(l.target_port)
-            }
+              target_port: String(l.target_port),
+            },
           });
         });
 
@@ -50,50 +50,51 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
               style: {
                 'background-color': '#0ea5e9', // sky-500
                 'background-opacity': 0.8,
-                'label': 'data(label)',
-                'color': '#cbd5e1',
+                label: 'data(label)',
+                color: '#cbd5e1',
                 'font-size': '11px',
                 'font-family': 'Outfit, sans-serif',
                 'text-valign': 'bottom',
                 'text-halign': 'center',
                 'text-margin-y': 6,
-                'width': 28,
-                'height': 28,
+                width: 28,
+                height: 28,
                 'border-width': 2,
                 'border-color': '#38bdf8',
                 'overlay-opacity': 0,
-                'transition-property': 'background-color, border-color, border-width, width, height',
-                'transition-duration': 300
-              }
+                'transition-property':
+                  'background-color, border-color, border-width, width, height',
+                'transition-duration': 300,
+              },
             },
             {
               selector: 'node[type="switch"]',
               style: {
-                'shape': 'hexagon',
+                shape: 'hexagon',
                 'background-color': '#6366f1', // indigo-500
                 'border-color': '#818cf8',
-                'width': 36,
-                'height': 36
-              }
+                width: 36,
+                height: 36,
+              },
             },
             {
               selector: 'edge',
               style: {
-                'width': 2.5,
+                width: 2.5,
                 'line-color': '#334155', // slate-700
                 'curve-style': 'bezier',
                 'target-arrow-shape': 'none',
                 'overlay-opacity': 0,
                 'transition-property': 'line-color, width',
                 'transition-duration': 300,
-                'label': 'data(label)',
+                label: 'data(label)',
                 'font-size': '9px',
-                'color': '#94a3b8',
+                color: '#94a3b8',
                 'text-background-opacity': 0.8,
                 'text-background-color': '#0f172a',
                 'text-background-padding': '2px',
-                'text-background-shape': 'roundrectangle'
-              }
+                'text-background-shape': 'roundrectangle',
+              },
             },
             {
               selector: 'node:selected',
@@ -101,17 +102,17 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
                 'border-width': 4,
                 'border-color': '#10b981', // emerald-500
                 'background-color': '#059669',
-                'width': 40,
-                'height': 40
-              }
+                width: 40,
+                height: 40,
+              },
             },
             {
               selector: 'edge:selected',
               style: {
-                'width': 5,
-                'line-color': '#10b981' // emerald-500
-              }
-            }
+                width: 5,
+                'line-color': '#10b981', // emerald-500
+              },
+            },
           ],
           layout: {
             name: 'cose',
@@ -121,9 +122,9 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
             edgeElasticity: () => 100,
             animate: true,
             animationDuration: 1000,
-            animationEasing: 'ease-out'
+            animationEasing: 'ease-out',
           },
-          wheelSensitivity: 0.2
+          wheelSensitivity: 0.2,
         });
 
         // Hover effects
@@ -138,7 +139,7 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
           onSelectElement({
             id: evt.target.id(),
             type: evt.target.isNode() ? 'node' : 'edge',
-            data: evt.target.data()
+            data: evt.target.data(),
           });
         });
 
@@ -151,7 +152,7 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
         cyRef.current = cy;
         setLoading(false);
       } catch (e) {
-        console.error("Failed to load topology", e);
+        console.error('Failed to load topology', e);
         setLoading(false);
       }
     };
@@ -176,8 +177,11 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
 
       // Look up both directions using the new port mappings
       // e.g. "core1-p1"
-      const state = linkStates[`${src}-p${srcPort}`] || linkStates[`${tgt}-p${tgtPort}`] ||
-                    linkStates[`${src}-${tgt}`] || linkStates[`${tgt}-${src}`];
+      const state =
+        linkStates[`${src}-p${srcPort}`] ||
+        linkStates[`${tgt}-p${tgtPort}`] ||
+        linkStates[`${src}-${tgt}`] ||
+        linkStates[`${tgt}-${src}`];
 
       if (state && state.predicted_risk !== undefined) {
         let color = '#334155'; // default slate-700
@@ -194,17 +198,17 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
         }
         // Only update if not selected (to preserve selection color)
         if (!edge.selected()) {
-          edge.style({ 'line-color': color, 'width': width });
+          edge.style({ 'line-color': color, width: width });
         }
 
         // Add dynamic metrics label
         let labelText = '';
         if (state.metrics) {
           if (state.metrics.control_plane_rtt_ms !== undefined) {
-             labelText += `${state.metrics.control_plane_rtt_ms.toFixed(1)}ms\n`;
+            labelText += `${state.metrics.control_plane_rtt_ms.toFixed(1)}ms\n`;
           }
           if (state.metrics.loss_percent !== undefined) {
-             labelText += `${state.metrics.loss_percent.toFixed(1)}% loss`;
+            labelText += `${state.metrics.loss_percent.toFixed(1)}% loss`;
           }
         }
         if (labelText) {
@@ -220,7 +224,9 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
         <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-md z-20">
           <div className="flex flex-col items-center gap-4">
             <div className="w-12 h-12 border-4 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin"></div>
-            <div className="text-emerald-400 font-mono text-sm uppercase tracking-widest animate-pulse">Initializing Topology...</div>
+            <div className="text-emerald-400 font-mono text-sm uppercase tracking-widest animate-pulse">
+              Initializing Topology...
+            </div>
           </div>
         </div>
       )}

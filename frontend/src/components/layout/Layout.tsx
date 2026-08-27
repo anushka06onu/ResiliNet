@@ -1,6 +1,14 @@
-
 import { NavLink, Outlet } from 'react-router-dom';
-import { Activity, Route, PlayCircle, FileText, Share2, Network, ShieldAlert, Server } from 'lucide-react';
+import {
+  Activity,
+  Route,
+  PlayCircle,
+  FileText,
+  Share2,
+  Network,
+  ShieldAlert,
+  Server,
+} from 'lucide-react';
 import { useStore } from '../../store/useStore';
 
 const Layout = () => {
@@ -27,7 +35,9 @@ const Layout = () => {
           </div>
           <div>
             <h1 className="font-bold text-white tracking-wide leading-tight">ResiliNet</h1>
-            <p className="text-[10px] text-slate-400 uppercase tracking-widest">NOC Dashboard v{version}</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-widest">
+              NOC Dashboard v{version}
+            </p>
           </div>
         </div>
 
@@ -51,12 +61,18 @@ const Layout = () => {
         </nav>
 
         <div className="p-4 border-t border-slate-800">
-          <div className={`text-xs px-3 py-1.5 rounded-md border text-center font-bold tracking-wider uppercase
-            ${dataMode === 'LIVE LAB' ? 'bg-emerald-900/30 text-emerald-400 border-emerald-500/50' : 
-              dataMode === 'EXPERIMENT REPLAY' ? 'bg-indigo-900/30 text-indigo-400 border-indigo-500/50' :
-              dataMode === 'DEMO DATA' ? 'bg-amber-900/30 text-amber-400 border-amber-500/50' :
-              dataMode === 'DISCONNECTED' ? 'bg-red-900/30 text-red-400 border-red-500/50' :
-              'bg-slate-800 text-slate-300 border-slate-700'
+          <div
+            className={`text-xs px-3 py-1.5 rounded-md border text-center font-bold tracking-wider uppercase
+            ${
+              dataMode === 'LIVE LAB'
+                ? 'bg-emerald-900/30 text-emerald-400 border-emerald-500/50'
+                : dataMode === 'EXPERIMENT REPLAY'
+                  ? 'bg-indigo-900/30 text-indigo-400 border-indigo-500/50'
+                  : dataMode === 'DEMO DATA'
+                    ? 'bg-amber-900/30 text-amber-400 border-amber-500/50'
+                    : dataMode === 'DISCONNECTED'
+                      ? 'bg-red-900/30 text-red-400 border-red-500/50'
+                      : 'bg-slate-800 text-slate-300 border-slate-700'
             }`}
           >
             {dataMode}
@@ -66,11 +82,18 @@ const Layout = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden flex flex-col relative">
-        <div className={`w-full py-1.5 text-center text-xs font-bold tracking-widest uppercase text-white shadow-md
-          ${dataMode === 'LIVE LAB' ? 'bg-emerald-600' : 
-            dataMode === 'EXPERIMENT REPLAY' ? 'bg-indigo-600' :
-            dataMode === 'DEMO DATA' ? 'bg-amber-600' :
-            dataMode === 'DISCONNECTED' ? 'bg-red-600' : 'bg-slate-700'
+        <div
+          className={`w-full py-1.5 text-center text-xs font-bold tracking-widest uppercase text-white shadow-md
+          ${
+            dataMode === 'LIVE LAB'
+              ? 'bg-emerald-600'
+              : dataMode === 'EXPERIMENT REPLAY'
+                ? 'bg-indigo-600'
+                : dataMode === 'DEMO DATA'
+                  ? 'bg-amber-600'
+                  : dataMode === 'DISCONNECTED'
+                    ? 'bg-red-600'
+                    : 'bg-slate-700'
           }`}
         >
           DATA MODE: {dataMode}
