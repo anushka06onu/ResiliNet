@@ -129,13 +129,14 @@ async def ingest_telemetry(payload: TelemetryPayload):
             "utilization": round(computed_features.get("utilization", 0.0), 4),
             "latency_ms": computed_features.get("control_plane_rtt_ms"),
             "loss_rate": computed_features.get("loss_mean_30s", 0.0),
-            "predicted_risk": 0.0
+            "predicted_risk": None,
+            "prediction_status": "unavailable"
         }
     }
     
     # Attempt prediction
     try:
-        from app.api.predict import explainer, MODEL_LOADED, DECISION_THRESHOLD
+        from app.api.predict import model, MODEL_LOADED, DECISION_THRESHOLD
         if MODEL_LOADED:
             import pandas as pd
             import sys
@@ -151,13 +152,18 @@ async def ingest_telemetry(payload: TelemetryPayload):
             ).apply(pd.to_numeric, errors="coerce")
             
             try:
-                prob = explainer.model.predict(df)[0]
+                prob = model.predict(df)[0]
                 event["payload"]["predicted_risk"] = float(prob)
                 event["payload"]["is_violation_predicted"] = bool(prob > DECISION_THRESHOLD)
+                event["payload"]["prediction_status"] = "success"
             except Exception as e:
                 print(f"Prediction failed: {e}")
+                event["payload"]["prediction_status"] = "inference_failed"
+        else:
+            event["payload"]["prediction_status"] = "model_unavailable"
     except Exception as e:
-        pass
+        event["payload"]["prediction_status"] = "inference_failed"
+        print(f"Prediction exception: {e}")
 
     await manager.broadcast(event)
     return {"status": "ingested"}
@@ -212,7 +218,7 @@ def get_latest_prediction(link_id: str):
     features = latest_features.get(link_id, {})
     
     try:
-        from app.api.predict import explainer, MODEL_LOADED, DECISION_THRESHOLD
+        from app.api.predict import model, explainer, MODEL_LOADED, EXPLAINER_LOADED, DECISION_THRESHOLD
         if MODEL_LOADED and features:
             import pandas as pd
             import sys
@@ -222,56 +228,64 @@ def get_latest_prediction(link_id: str):
                 sys.path.append(project_root)
             from ml.schema import MODEL_FEATURES
             
-            df = pd.DataFrame(
-                [features],
-                columns=MODEL_FEATURES
-            ).apply(pd.to_numeric, errors="coerce")
             try:
-                prob = float(explainer.model.predict(df)[0])
-                explanation = explainer.get_local_explanation(df)
-                
-                # Replace NaN with None for JSON compliance
-                import math
-                for f in explanation.get("features", []):
-                    if isinstance(f.get("value"), float) and math.isnan(f["value"]):
-                        f["value"] = None
-                        
-                return {
-                    "mode": "LIVE LAB",
-                    "predict": {
-                        "link_id": link_id,
-                        "congestion_probability": prob,
-                        "is_violation_predicted": bool(prob > DECISION_THRESHOLD),
-                        "horizon": "30s"
-                    },
-                    "explain": explanation
-                }
+                df = pd.DataFrame(
+                    [features],
+                    columns=MODEL_FEATURES
+                ).apply(pd.to_numeric, errors="coerce")
             except Exception as e:
                 return {
                     "mode": "LIVE LAB",
-                    "prediction_status": "unavailable",
+                    "prediction_status": "schema_mismatch",
                     "error": "feature_schema_mismatch",
                     "detail": str(e)
                 }
+            
+            try:
+                prob = float(model.predict(df)[0])
+            except Exception as e:
+                return {
+                    "mode": "LIVE LAB",
+                    "prediction_status": "inference_failed",
+                    "error": "inference_failed",
+                    "detail": str(e)
+                }
+                
+            explanation = {"status": "unavailable", "reason": "explainer_not_loaded"}
+            if EXPLAINER_LOADED:
+                try:
+                    explanation = explainer.get_local_explanation(df)
+                    import math
+                    for f in explanation.get("features", []):
+                        if isinstance(f.get("value"), float) and math.isnan(f["value"]):
+                            f["value"] = None
+                except Exception as e:
+                    explanation = {"status": "unavailable", "reason": "explainer_failed", "detail": str(e)}
+                    
+            return {
+                "mode": "LIVE LAB",
+                "prediction_status": "success",
+                "predict": {
+                    "link_id": link_id,
+                    "congestion_probability": prob,
+                    "is_violation_predicted": bool(prob > DECISION_THRESHOLD),
+                    "horizon": "30s"
+                },
+                "explain": explanation
+            }
+        else:
+            return {
+                "mode": "LIVE LAB",
+                "prediction_status": "model_unavailable" if not MODEL_LOADED else "insufficient_data",
+                "error": "model_unavailable" if not MODEL_LOADED else "no_features"
+            }
     except Exception as e:
-        pass
-        
-    # Deterministic mock fallback
-    link_hash = sum(ord(c) for c in link_id)
-    risk = (link_hash % 100) / 100.0
-    return {
-        "mode": "DEMO DATA",
-        "predict": {
-            "link_id": link_id,
-            "congestion_probability": risk,
-            "is_violation_predicted": risk > 0.5,
-            "horizon": "30s"
-        },
-        "explain": {"features": [
-            {"name": "utilization", "contribution": 0.3},
-            {"name": "loss_mean_30s", "contribution": 0.2},
-        ]}
-    }
+        return {
+            "mode": "LIVE LAB",
+            "prediction_status": "inference_failed",
+            "error": "internal_error",
+            "detail": str(e)
+        }
 
 # ---------------------------------------------------------
 # Flows & QoS Endpoints
