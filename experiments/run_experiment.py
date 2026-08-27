@@ -117,6 +117,20 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                     finally:
                         mn_log.close()
         finally:
+            # Capture post-experiment OpenFlow and port evidence if available
+            try:
+                for sw in ["s1", "s2", "s3", "s4", "c1", "c2"]:
+                    f_proc = subprocess.run(["sudo", "ovs-ofctl", "-O", "OpenFlow13", "dump-flows", sw], capture_output=True, text=True, timeout=5)
+                    if f_proc.returncode == 0 and f_proc.stdout:
+                        with open(results_dir / f"{experiment_id}_{sw}_flows.txt", "w") as f:
+                            f.write(f_proc.stdout)
+                    p_proc = subprocess.run(["sudo", "ovs-ofctl", "-O", "OpenFlow13", "dump-ports", sw], capture_output=True, text=True, timeout=5)
+                    if p_proc.returncode == 0 and p_proc.stdout:
+                        with open(results_dir / f"{experiment_id}_{sw}_ports.txt", "w") as f:
+                            f.write(p_proc.stdout)
+            except Exception as e:
+                print(f"Notice: Automated OpenFlow dump capture skipped: {e}")
+
             # 3. Clean up
             print("Cleaning up Mininet and Ryu...")
             cleanup_proc = subprocess.run(["sudo", "mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -132,21 +146,6 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
             if not ryu_log.closed:
                 ryu_log.close()
-        # 3. Clean up
-        print("Cleaning up Mininet and Ryu...")
-        cleanup_proc = subprocess.run(["sudo", "mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if cleanup_proc.returncode != 0 and status == "completed":
-            status = "cleanup_failed"
-
-        if 'ryu_proc' in locals() and ryu_proc.poll() is None:
-            ryu_proc.terminate()
-            try:
-                ryu_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                ryu_proc.kill()
-
-        if not ryu_log.closed:
-            ryu_log.close()
 
     end_time = datetime.now(timezone.utc).isoformat()
 
@@ -170,6 +169,22 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
     with open(results_dir / f"{experiment_id}_manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
+
+    # Automatically generate SHA256SUMS for all generated artifacts
+    try:
+        import hashlib
+        sums_file = results_dir / f"{experiment_id}_SHA256SUMS"
+        with open(sums_file, "w") as sf:
+            for art in sorted(results_dir.glob(f"{experiment_id}_*")):
+                if art == sums_file:
+                    continue
+                h = hashlib.sha256()
+                with open(art, "rb") as fl:
+                    for chunk in iter(lambda: fl.read(65536), b""):
+                        h.update(chunk)
+                sf.write(f"{h.hexdigest()}  {art.name}\n")
+    except Exception as e:
+        print(f"Notice: Automated SHA256SUMS generation skipped: {e}")
 
     print(f"Experiment {experiment_id} finished with status: {status}")
     if status == "environment_unavailable":
