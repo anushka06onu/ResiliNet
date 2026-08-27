@@ -156,7 +156,8 @@ async def ingest_telemetry(payload: TelemetryPayload):
         print(f"Prediction exception: {e}")
 
     # Pass the event to the Orchestrator to evaluate flows and routing
-    orchestrator.handle_telemetry_event(event)
+    # Offload to a background thread to prevent blocking the async event loop with subprocess and sleep calls
+    asyncio.create_task(asyncio.to_thread(orchestrator.handle_telemetry_event, event))
 
     await manager.broadcast(event)
     return {"status": "ingested"}
@@ -316,27 +317,63 @@ def list_routing_decisions():
     return orchestrator.routing_decisions
 
 # ---------------------------------------------------------
+# ---------------------------------------------------------
 # Experiment Control & Replay
 # ---------------------------------------------------------
+import subprocess
+import glob
+
+active_experiments = {}
+
 @app.get("/api/v1/experiments")
 def list_experiments():
-    return [{"id": "exp_001", "topology": "small_test", "duration": "300s"}]
+    # Return active experiments + past experiments from results folder
+    results = []
+    for exp_id, proc in active_experiments.items():
+        if proc.poll() is None:
+            results.append({"id": exp_id, "status": "running"})
+            
+    for f in glob.glob("experiments/results/*.json"):
+        import os
+        results.append({"id": os.path.basename(f).replace('.json',''), "status": "completed"})
+    
+    return results
 
 @app.get("/api/v1/experiments/{id}")
 def get_experiment(id: str):
+    if id in active_experiments and active_experiments[id].poll() is None:
+        return {"id": id, "status": "running"}
     return {"id": id, "status": "completed"}
 
+class ExperimentConfig(BaseModel):
+    scenario: str = "normal"
+    duration: int = 60
+    seed: int = 42
+
 @app.post("/api/v1/experiments/{id}/start")
-def start_experiment(id: str):
-    return {"status": "started", "experiment": id}
+def start_experiment(id: str, config: ExperimentConfig = None):
+    if config is None:
+        config = ExperimentConfig()
+        
+    if id in active_experiments and active_experiments[id].poll() is None:
+        return {"status": "error", "message": "Experiment already running"}
+        
+    cmd = ["python3", "experiments/run_experiment.py", "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed)]
+    proc = subprocess.Popen(cmd)
+    active_experiments[id] = proc
+    return {"status": "started", "experiment": id, "scenario": config.scenario}
 
 @app.post("/api/v1/experiments/{id}/pause")
 def pause_experiment(id: str):
-    return {"status": "paused", "experiment": id}
+    return {"status": "paused", "experiment": id, "message": "Pause not supported directly in Mininet yet"}
 
 @app.post("/api/v1/experiments/{id}/stop")
 def stop_experiment(id: str):
-    return {"status": "stopped", "experiment": id}
+    if id in active_experiments and active_experiments[id].poll() is None:
+        import signal
+        active_experiments[id].send_signal(signal.SIGINT)
+        return {"status": "stopped", "experiment": id}
+    return {"status": "error", "message": "Experiment not running"}
 
 @app.get("/api/v1/replay/{experiment_id}")
 def replay_experiment(experiment_id: str):
