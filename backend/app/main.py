@@ -77,7 +77,14 @@ last_telemetry_timestamp = None
 
 # A rolling buffer for historical telemetry values to compute rolling stats
 # Format: { link_id: [(timestamp, rx_bytes, tx_dropped, tx_packets)] }
-link_history = {}
+import sys
+from pathlib import Path
+project_root = str(Path(__file__).resolve().parents[2])
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+from data_pipeline.feature_engineering import FeaturePipeline
+feature_pipeline = FeaturePipeline()
 
 @app.post("/api/v1/telemetry/ingest")
 async def ingest_telemetry(payload: TelemetryPayload):
@@ -86,36 +93,19 @@ async def ingest_telemetry(payload: TelemetryPayload):
     
     link_id = f"{payload.switch_id}-p{payload.port_no}"
     
-    now = last_telemetry_timestamp.timestamp()
-    if link_id not in link_history:
-        link_history[link_id] = []
-        
-    link_history[link_id].append((now, payload.features))
-    # Filter 30s window
-    link_history[link_id] = [(t, f) for t, f in link_history[link_id] if now - t <= 30]
+    # payload.features currently has rx_bytes, tx_bytes, control_plane_rtt_ms, loss_percent, etc.
+    # We pass it to the FeaturePipeline
+    computed_features = feature_pipeline.process_raw_telemetry(
+        link_id=link_id, 
+        raw_metrics=payload.features,
+        timestamp=last_telemetry_timestamp
+    )
     
-    hist = link_history[link_id]
+    if computed_features.get("status") == "INSUFFICIENT_DATA":
+        latest_features[link_id] = payload.features # Store raw until warm
+        return {"status": "warming_up", "message": "Gathering more telemetry"}
     
-    # Compute rolling features
-    loss_rates = [f.get("loss_mean_30s", 0.0) for _, f in hist]
-    loss_mean_30s = sum(loss_rates) / len(loss_rates) if loss_rates else 0.0
-    
-    tx_drops = [f.get("tx_dropped_max", 0.0) for _, f in hist]
-    tx_dropped_max = max(tx_drops) if tx_drops else 0.0
-    
-    rx_bytes_slope = 0.0
-    if len(hist) > 1:
-        t0, f0 = hist[0]
-        tn, fn = hist[-1]
-        dt = tn - t0
-        if dt > 0:
-            rx_bytes_slope = (fn.get("rx_bytes_slope", 0.0) - f0.get("rx_bytes_slope", 0.0)) / dt
-            
-    computed_features = payload.features.copy()
-    computed_features["loss_mean_30s"] = loss_mean_30s
-    computed_features["tx_dropped_max"] = tx_dropped_max
-    computed_features["rx_bytes_slope"] = rx_bytes_slope
-    
+    # Store globally so frontend can poll it
     latest_features[link_id] = computed_features
 
     event = {
