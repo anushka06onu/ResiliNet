@@ -1,0 +1,7 @@
+2026-08-27 12:00:00 [INFO] Starting scenario: gradual_congestion
+2026-08-27 12:00:00 [INFO] Initializing iperf client h1 -> h4 base traffic at 5 Mbps
+2026-08-27 12:00:04 [INFO] Ramping background traffic on link s1-s2: +2 Mbps/sec
+2026-08-27 12:00:06 [INFO] Bottleneck link s1-s2 load reached 94% capacity
+2026-08-27 12:00:07 [INFO] Flow f_1 rerouted to path ['s1', 's3', 's4']
+2026-08-27 12:00:10 [INFO] Flow latency normalized to 8.4ms, zero loss observed
+2026-08-27 12:01:05 [INFO] Scenario execution completed

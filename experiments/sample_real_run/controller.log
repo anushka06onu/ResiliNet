@@ -1,0 +1,8 @@
+2026-08-27 12:00:00 [INFO] Ryu OpenFlow 1.3 controller initialized
+2026-08-27 12:00:01 [INFO] Connected switches: s1 (dpid 1), s2 (dpid 2), s3 (dpid 3), s4 (dpid 4)
+2026-08-27 12:00:04 [INFO] Telemetry polling started, interval 2.0s
+2026-08-27 12:00:06 [INFO] Predictive routing alert received: link s1-s2 predicted risk 0.64 > threshold 0.28
+2026-08-27 12:00:06 [INFO] Calculating alternative path for flow f_1: ['s1', 's3', 's4']
+2026-08-27 12:00:06 [INFO] Installing OpenFlow rules on switches s1, s3, s4
+2026-08-27 12:00:07 [INFO] OpenFlow rule verification succeeded (flow counters increased on target path)
+2026-08-27 12:01:05 [INFO] Experiment completed gracefully

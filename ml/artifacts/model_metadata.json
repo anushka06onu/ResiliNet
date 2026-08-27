@@ -1,4 +1,5 @@
 {
+  "run_id": "run_20260827_145929_3f0263",
   "model_version": "1.1.0",
   "feature_schema_version": "v1.1",
   "feature_names": [
@@ -8,10 +9,14 @@
     "rx_bytes_slope",
     "tx_bytes_rate"
   ],
-  "training_data_hash": "sha256:4a9c8b7f6e5d",
-  "training_commit": "e2f9d10",
-  "decision_threshold": 0.79,
-  "calibration_version": "platt_v1",
-  "creation_time": "2026-08-27T12:00:00Z",
+  "training_data_hash": "b810c8e127e05b59e97ea64450818e0db53ee8185375c42ac8531278c60d8dfa",
+  "training_commit": "a10eaf969d1b830d1a3b8d1402921e1ab84a7137",
+  "git_dirty": true,
+  "decision_threshold": 0.28,
+  "calibration": {
+    "method": null,
+    "status": "not_calibrated"
+  },
+  "creation_time": "2026-08-27T14:59:30.262290+00:00",
   "data_origin": "synthetic"
 }

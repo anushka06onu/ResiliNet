@@ -110,6 +110,43 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# ---------------------------------------------------------
+# Health Check Endpoints
+# ---------------------------------------------------------
+@app.get("/health/live")
+def health_live():
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+@app.get("/health/ready")
+def health_ready():
+    from app.api.predict import MODEL_LOADED
+    from app.db.database import db_manager
+
+    db_ok = False
+    try:
+        conn = db_manager.get_connection()
+        with db_manager._lock:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            db_ok = True
+    except Exception:
+        db_ok = False
+
+    ready = MODEL_LOADED and db_ok
+    status_code = 200 if ready else 503
+
+    payload = {
+        "status": "ready" if ready else "not_ready",
+        "components": {
+            "model_loaded": MODEL_LOADED,
+            "database_connected": db_ok,
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    if not ready:
+        raise HTTPException(status_code=status_code, detail=payload)
+    return payload
+
 @app.websocket("/api/v1/stream")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)

@@ -1,0 +1,12 @@
+{
+  "schema_version": "v1.1",
+  "features": [
+    "loss_mean_30s",
+    "tx_dropped_max",
+    "control_plane_rtt_ms",
+    "rx_bytes_slope",
+    "tx_bytes_rate"
+  ],
+  "target": "sla_violated_in_horizon",
+  "run_id": "run_20260827_145929_3f0263"
+}

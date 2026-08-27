@@ -63,4 +63,12 @@ def test_routing_decisions_query():
     assert response.status_code == 200
     assert isinstance(response.json(), list)
 
+def test_health_endpoints():
+    live_res = client.get("/health/live")
+    assert live_res.status_code == 200
+    assert live_res.json()["status"] == "ok"
 
+    ready_res = client.get("/health/ready")
+    assert ready_res.status_code == 200
+    assert ready_res.json()["status"] == "ready"
+    assert ready_res.json()["components"]["database_connected"] is True
