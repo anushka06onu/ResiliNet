@@ -11,6 +11,7 @@ if project_root not in sys.path:
 
 from mininet.log import info, setLogLevel
 from network.topologies.small_test import create_small_network
+from experiments.evidence_collector import capture_switch_state, record_policy
 
 
 def run_concurrent_flows():
@@ -23,9 +24,16 @@ def run_concurrent_flows():
     setLogLevel('info')
     seed = int(os.environ.get("EXPERIMENT_SEED", "42"))
     duration = int(os.environ.get("EXPERIMENT_DURATION", "60"))
+    exp_id = os.environ.get("EXPERIMENT_ID", f"concurrent_flows_seed{seed}")
+    policy = os.environ.get("RESILINET_POLICY", "predictive")
+    results_dir = Path(project_root) / "experiments" / "results"
 
-    info(f'*** Starting Concurrent Competing Flows Scenario (Seed: {seed}, Duration: {duration}s)\n')
+    record_policy(policy, exp_id)
+    info(f'*** Starting Concurrent Competing Flows Scenario (Seed: {seed}, Duration: {duration}s, Policy: {policy})\n')
     net = create_small_network()
+
+    # Capture baseline state while topology is fresh
+    capture_switch_state(["s1", "s2", "s3", "s4"], results_dir, exp_id, stage="before")
 
     h1 = net.get('h1')
     h2 = net.get('h2') if 'h2' in net else h1
@@ -60,6 +68,10 @@ def run_concurrent_flows():
     s1.cmd('tc qdisc change dev s1-eth3 root netem delay 35ms loss 8%')
 
     time.sleep(duration - (duration // 3) * 2)
+
+    # Capture post-intervention state before tearing down network
+    info('*** Capturing post-intervention OpenFlow and port state...\n')
+    capture_switch_state(["s1", "s2", "s3", "s4"], results_dir, exp_id, stage="after")
 
     info('*** Stopping network\n')
     net.stop()

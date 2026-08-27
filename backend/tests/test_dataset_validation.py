@@ -155,9 +155,11 @@ def test_sample_real_run_manifest_provenance():
     assert hashes.get("topology_file_sha256") == sha256(topology_path)
 
     # 3. Verify scientific evidence boundaries and environment
-    assert manifest.get("evidence_scope") in ("pipeline_execution_demonstration", "parser_and_interface_testing")
+    assert manifest.get("mode") == "FIXTURE"
+    assert manifest.get("evidence_scope") == "parser_and_interface_testing"
+    assert manifest.get("data_origin") == "constructed_fixture"
+    assert manifest.get("real_experiment") is False
     assert manifest.get("predictive_performance_validated") is False
-    assert manifest.get("data_origin") in ("mininet", "constructed_fixture")
     assert manifest.get("status") == "completed"
 
     env = manifest.get("environment", {})

@@ -29,9 +29,10 @@
   "artifact_hashes": {
     "model_file_sha256": "e5dabeb49cada7f1e8d936d19042d56869bb710ce7feefdabd4b3c344d3f6940",
     "model_run_id": "run_20260827_160256_1f3da3",
-    "scenario_file_sha256": "4182bc5345f419cfbb1442732759e1b2961c669863558f94d4fe7ecfe9066366",
+    "scenario_file_sha256": "eac90198dcd11e06ea062ee1cf1f31668babb7acc89f0bcd358825ed92c994c6",
     "topology_file_sha256": "1fa15aa0bc01270d5d6773ebae4a909c8dc6c09ba6422a30d430d6294bc6f96e"
   },
+  "process_results_origin": "constructed_fixture",
   "process_results": {
     "ryu_controller_exit_code": 0,
     "mininet_scenario_exit_code": 0,
