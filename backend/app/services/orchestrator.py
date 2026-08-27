@@ -1,18 +1,26 @@
 import uuid
+import threading
 from datetime import datetime
 import sys
 import os
+import logging
 
 # Ensure network is accessible
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from network.routing.predictive_routing import PredictiveRouter
-import logging
+
+logging.basicConfig(level=logging.INFO)
 
 class Orchestrator:
+    """
+    Coordinates between ML telemetry ingestion, state tracking, and routing logic.
+    """
     def __init__(self):
+        # We load a topology at startup or receive it via ingest endpoint
         self.router = PredictiveRouter(topology_json='frontend/public/topology.json')
         self.flows = {}
+        self.flow_locks = {}
         self.routing_decisions = []
 
     def load_topology(self, topo_data):
@@ -60,10 +68,12 @@ class Orchestrator:
             "src": src,
             "dst": dst,
             "tier": tier,
+            "state": "STABLE",
             "sla_status": "Healthy",
-            "current_path": initial_path,
-            "state": "ACTIVE"
+            "current_path": initial_path
         }
+        self.flow_locks[flow_id] = threading.Lock()
+        logging.info(f"Registered {tier} flow {flow_id} from {src} to {dst}: {initial_path}")
 
     def handle_telemetry_event(self, event):
         """Process a telemetry event, update risks, and trigger routing if necessary."""
@@ -96,55 +106,58 @@ class Orchestrator:
     def _evaluate_affected_flows(self, congested_switch):
         """Find flows crossing the congested switch and attempt to reroute them."""
         for flow_id, flow in self.flows.items():
-            if flow["state"] != "ACTIVE":
-                continue
-                
-            path = flow["current_path"]
-            if congested_switch in path:
-                # Trigger reroute evaluation
-                flow["state"] = "EVALUATING"
-                
-                # Mock IPs (in a real system, these would be in the flow registry)
-                nw_src = "10.0.0.1" if flow["src"] == "h1" else "10.0.0.2"
-                nw_dst = "10.0.0.4" if flow["dst"] == "h4" else "10.0.0.3"
-                
-                logging.info(f"Flow {flow_id} crosses congested switch {congested_switch}. Evaluating reroute...")
-                success, msg, proposed_path = self.router.evaluate_and_reroute(
-                    flow_id=flow_id,
-                    source=path[0],
-                    target=path[-1],
-                    current_path=path,
-                    nw_src=nw_src,
-                    nw_dst=nw_dst
-                )
-                
-                # Record decision
-                decision = {
-                    "decision_id": str(uuid.uuid4()),
-                    "experiment_id": "live_run",
-                    "flow_id": flow_id,
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "risk_before": None, # Could extract from router
-                    "risk_after": None,
-                    "original_path": path,
-                    "proposed_path": None,
-                    "safeguard_result": msg,
-                    "installation_status": "success" if success else "failed",
-                    "verification_status": "success" if success else "failed",
-                    "outcome_status": "success" if success else "failed"
-                }
-                
-                if success:
-                    # Update flow path (ideally we fetch proposed_path from router, but router evaluate_and_reroute doesn't return it yet)
-                    # We will just mark it as ACTIVE again for now.
-                    flow["sla_status"] = "Rerouted"
-                    flow["current_path"] = proposed_path
-                    decision["proposed_path"] = proposed_path
-                else:
-                    flow["sla_status"] = "Violated"
-                    
-                flow["state"] = "ACTIVE"
-                self.routing_decisions.append(decision)
+            # Attempt to acquire lock without blocking so we don't hold up other evaluations
+            lock = self.flow_locks.get(flow_id)
+            if lock and lock.acquire(blocking=False):
+                try:
+                    if flow["state"] != "STABLE":
+                        continue
+                        
+                    path = flow["current_path"]
+                    if congested_switch in path:
+                        # Trigger reroute evaluation
+                        flow["state"] = "EVALUATING"
+                        
+                        # Mock IPs (in a real system, these would be in the flow registry)
+                        nw_src = "10.0.0.1" if flow["src"] == "h1" else "10.0.0.2"
+                        nw_dst = "10.0.0.4" if flow["dst"] == "h4" else "10.0.0.3"
+                        
+                        logging.info(f"Flow {flow_id} crosses congested switch {congested_switch}. Evaluating reroute...")
+                        success, msg, proposed_path = self.router.evaluate_and_reroute(
+                            flow_id=flow_id,
+                            source=path[0],
+                            target=path[-1],
+                            current_path=path,
+                            nw_src=nw_src,
+                            nw_dst=nw_dst
+                        )
+                        
+                        # Record decision
+                        decision = {
+                            "decision_id": str(uuid.uuid4()),
+                            "experiment_id": "live_run",
+                            "flow_id": flow_id,
+                            "timestamp": datetime.utcnow().isoformat() + "Z",
+                            "risk_before": None, # Could extract from router
+                            "risk_after": None,
+                            "original_path": path,
+                            "proposed_path": proposed_path if success else None,
+                            "safeguard_result": msg,
+                            "installation_status": "success" if success else "failed",
+                            "verification_status": "success" if success else "failed",
+                            "outcome_status": "success" if success else "failed"
+                        }
+                        
+                        if success:
+                            flow["sla_status"] = "Rerouted"
+                            flow["current_path"] = proposed_path
+                        else:
+                            flow["sla_status"] = "Violated"
+                            
+                        flow["state"] = "STABLE"
+                        self.routing_decisions.append(decision)
+                finally:
+                    lock.release()
 
 # Singleton instance
 orchestrator = Orchestrator()
