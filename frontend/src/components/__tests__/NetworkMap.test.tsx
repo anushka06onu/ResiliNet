@@ -42,4 +42,19 @@ describe('NetworkMap', () => {
       expect(api.getTopology).toHaveBeenCalled();
     });
   });
+
+  it('handles empty topology response gracefully', async () => {
+    vi.mocked(api.getTopology).mockResolvedValue({
+      nodes: [],
+      links: [],
+      mode: 'NO_DATA',
+    });
+
+    const mockOnSelect = vi.fn();
+    render(<NetworkMap onSelectElement={mockOnSelect} />);
+
+    await waitFor(() => {
+      expect(api.getTopology).toHaveBeenCalled();
+    });
+  });
 });

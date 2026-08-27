@@ -50,16 +50,22 @@ const MOCK_TOPOLOGY = {
   ],
 };
 
+import { useStore } from '../store/useStore';
+
 export const getTopology = async () => {
   try {
     const res = await fetch(`${API_BASE}/topology/current`);
-    if (!res.ok) throw new Error('Network response was not ok');
+    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
     isSimulationMode = false;
     return await res.json();
   } catch {
-    console.warn('Backend unreachable, falling back to Simulation Mode for Topology.');
-    isSimulationMode = true;
-    return MOCK_TOPOLOGY;
+    console.warn('Backend unreachable for topology.');
+    useStore.getState().setSystemStatus('DISCONNECTED', 'Unknown', 0);
+    // If explicitly in simulation mode, return mock topology, otherwise throw/return error state
+    if (isSimulationMode) {
+      return MOCK_TOPOLOGY;
+    }
+    return { nodes: [], links: [], mode: 'DISCONNECTED', error: 'Backend unreachable' };
   }
 };
 
