@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 
 import json
-from mininet.topo import Topo
-from mininet.net import Mininet
-from mininet.node import Controller, OVSKernelSwitch
-from mininet.link import TCLink
-from mininet.log import setLogLevel, info
 import os
+
+from mininet.log import setLogLevel
+from mininet.topo import Topo
+
 
 class CampusHealthTopo(Topo):
     """

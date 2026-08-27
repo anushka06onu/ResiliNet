@@ -1,10 +1,10 @@
-import pytest
-import sys
 import os
+import sys
 from datetime import datetime
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from data_pipeline.feature_engineering import FeaturePipeline
+
 
 def test_feature_pipeline_insufficient_data():
     pipeline = FeaturePipeline()

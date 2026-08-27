@@ -1,16 +1,16 @@
+import os
+import sys
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any, List
-import sys
-import os
 
 # Add root to sys.path to import ml module
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
-import numpy as np
-import pandas as pd
 import json
 from pathlib import Path
+
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3]
 MODEL_PATH = ROOT / "ml" / "artifacts" / "lightgbm_model.txt"
@@ -25,6 +25,7 @@ explainer = None
 # 1. Attempt to load the LightGBM model for pure inference
 try:
     import lightgbm as lgb
+
     from ml.schema import MODEL_FEATURES
     
     if MODEL_PATH.exists():
@@ -57,7 +58,7 @@ router = APIRouter()
 class FeatureVector(BaseModel):
     switch_id: str
     port_no: str
-    features: Dict[str, float]
+    features: dict[str, float]
 
 @router.post("/predict")
 async def predict_congestion(data: FeatureVector):

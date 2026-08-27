@@ -1,17 +1,13 @@
+import os
+import time
+
+import requests
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
-from ryu.controller.handler import set_ev_cls
-from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet
-from ryu.lib.packet import ethernet
-from ryu.lib.packet import ether_types
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.lib import hub
-import requests
-import time
-import json
-import os
-from datetime import datetime
+from ryu.lib.packet import ether_types, ethernet, packet
+from ryu.ofproto import ofproto_v1_3
 
 API_ENDPOINT = os.environ.get("RESILINET_API_URL", "http://host.docker.internal:8000/api/v1/telemetry/ingest")
 
@@ -19,7 +15,7 @@ class ResiliNetRyuController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(ResiliNetRyuController, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.mac_to_port = {}
         self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)

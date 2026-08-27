@@ -1,10 +1,10 @@
-import pytest
-import sys
 import os
+import sys
 from unittest.mock import MagicMock
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from backend.app.services.orchestrator import Orchestrator
+
 
 def test_orchestrator_initial_state():
     orchestrator = Orchestrator()

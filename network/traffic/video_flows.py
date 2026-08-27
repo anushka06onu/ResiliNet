@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import time
 
+
 def start_video_flow(net, src_name, dst_name, bw="2M"):
     """
     Simulate an online class / video conference.

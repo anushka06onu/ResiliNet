@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 
-from mininet.log import setLogLevel, info
-import time
-import sys
 import os
+import sys
+import time
+
+from mininet.log import info, setLogLevel
 
 # Ensure we can import from topologies and traffic
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from network.topologies.campus_health import CampusHealthTopo
-from network.traffic.critical_flows import start_telemedicine_flow
-from network.traffic.video_flows import start_video_flow
-from network.traffic.background_flows import start_background_flow
+from mininet.link import TCLink
 from mininet.net import Mininet
 from mininet.node import Controller, OVSKernelSwitch
-from mininet.link import TCLink
+
+from network.topologies.campus_health import CampusHealthTopo
+from network.traffic.background_flows import start_background_flow
+from network.traffic.critical_flows import start_telemedicine_flow
+from network.traffic.video_flows import start_video_flow
+
 
 def run_scenario():
     """

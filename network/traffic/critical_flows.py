@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import time
 
+
 def start_telemedicine_flow(net, src_name, dst_name, bw="3M"):
     """
     Simulate a telemedicine stream.

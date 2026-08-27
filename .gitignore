@@ -4,3 +4,13 @@ __pycache__/
 node_modules/
 .DS_Store
 .env
+experiments/results/*
+!experiments/results/.gitkeep
+*.db
+*.sqlite
+*.sqlite3
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+frontend/dist/

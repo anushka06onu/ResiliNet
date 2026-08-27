@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
-import shap
-import lightgbm as lgb
-import pandas as pd
-import numpy as np
 import os
-import matplotlib.pyplot as plt
+
+import lightgbm as lgb
+import numpy as np
+import pandas as pd
+import shap
+
 
 class ResiliNetExplainer:
     def __init__(self, model_path='ml/artifacts/lightgbm_model.txt'):

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import xml.etree.ElementTree as ET
+
 from mininet.topo import Topo
+
 
 class SNDlibTopo(Topo):
     """
@@ -12,7 +14,7 @@ class SNDlibTopo(Topo):
     """
     def __init__(self, xml_file, **opts):
         self.xml_file = xml_file
-        super(SNDlibTopo, self).__init__(**opts)
+        super().__init__(**opts)
 
     def build(self):
         try:

@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 
-import lightgbm as lgb
-import pandas as pd
-import numpy as np
-from sklearn.metrics import classification_report, roc_auc_score, average_precision_score, confusion_matrix
 import os
-from train_lightgbm import load_data
+
+import lightgbm as lgb
+from sklearn.metrics import (
+    average_precision_score,
+    classification_report,
+    confusion_matrix,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
+from train_lightgbm import load_data
+
 
 def evaluate_model():
     model_path = 'ml/artifacts/lightgbm_model.txt'

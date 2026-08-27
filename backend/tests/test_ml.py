@@ -1,11 +1,13 @@
-import pytest
-import sys
 import os
-import pandas as pd
+import sys
+
 import lightgbm as lgb
+import pandas as pd
+import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from ml.schema import MODEL_FEATURES
+
 
 def test_model_schema_compatibility():
     """Verify the saved LightGBM model expects the exact schema defined in MODEL_FEATURES"""

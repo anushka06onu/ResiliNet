@@ -1,13 +1,13 @@
+import asyncio
+import json
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-import os
-import json
-import sys
-import asyncio
-import random
-from datetime import datetime
 from pydantic import BaseModel
-from pathlib import Path
 
 project_root = Path(__file__).resolve().parents[2]
 
@@ -82,11 +82,13 @@ last_telemetry_timestamp = None
 # Format: { link_id: [(timestamp, rx_bytes, tx_dropped, tx_packets)] }
 import sys
 from pathlib import Path
+
 project_root = str(Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.append(project_root)
 
 from data_pipeline.feature_engineering import FeaturePipeline
+
 feature_pipeline = FeaturePipeline()
 
 @app.post("/api/v1/telemetry/ingest")
@@ -140,11 +142,12 @@ async def ingest_telemetry(payload: TelemetryPayload):
 
     # Attempt prediction
     try:
-        from app.api.predict import model, MODEL_LOADED, DECISION_THRESHOLD
+        from app.api.predict import DECISION_THRESHOLD, MODEL_LOADED, model
         if MODEL_LOADED:
-            import pandas as pd
             import sys
             from pathlib import Path
+
+            import pandas as pd
             project_root = str(Path(__file__).resolve().parents[2])
             if project_root not in sys.path:
                 sys.path.append(project_root)
@@ -195,6 +198,7 @@ active_live_topology = None
 
 from app.services.orchestrator import orchestrator
 
+
 @app.post("/api/v1/topology/ingest")
 async def ingest_topology(payload: dict):
     global active_live_topology
@@ -236,11 +240,18 @@ def get_latest_prediction(link_id: str):
     features = latest_features.get(link_id, {})
 
     try:
-        from app.api.predict import model, explainer, MODEL_LOADED, EXPLAINER_LOADED, DECISION_THRESHOLD
+        from app.api.predict import (
+            DECISION_THRESHOLD,
+            EXPLAINER_LOADED,
+            MODEL_LOADED,
+            explainer,
+            model,
+        )
         if MODEL_LOADED and features:
-            import pandas as pd
             import sys
             from pathlib import Path
+
+            import pandas as pd
             project_root = str(Path(__file__).resolve().parents[2])
             if project_root not in sys.path:
                 sys.path.append(project_root)
@@ -342,20 +353,7 @@ def list_routing_decisions():
 # Experiment Control & Replay
 # ---------------------------------------------------------
 import subprocess
-import glob
 
-active_experiments = {}
-
-@app.get("/api/v1/experiments")
-def list_experiments():
-    # Return active experiments + past experiments from results folder
-    results = []
-    for exp_id, proc in active_experiments.items():
-        if proc.poll() is None:
-            results.append({"id": exp_id, "status": "running"})
-
-    for f in glob.glob("experiments/results/*.json"):
-    return results
 
 class ExperimentManager:
     def __init__(self):
@@ -392,6 +390,37 @@ class ExperimentManager:
         return "completed"
 
 experiment_manager = ExperimentManager()
+
+@app.get("/api/v1/experiments")
+def list_experiments():
+    import json
+    results = []
+    
+    # Add currently active
+    for exp_id, proc in experiment_manager.active_processes.items():
+        if proc.poll() is None:
+            results.append({
+                "id": exp_id,
+                "status": "running"
+            })
+            
+    # Add finished from results directory
+    results_dir = Path(project_root) / "experiments" / "results"
+    for manifest_path in results_dir.glob("*_manifest.json"):
+        try:
+            with manifest_path.open("r", encoding="utf-8") as file:
+                manifest = json.load(file)
+                
+            results.append({
+                "id": manifest.get("experiment_id"),
+                "status": manifest.get("status", "unknown"),
+                "scenario": manifest.get("scenario"),
+                "seed": manifest.get("seed"),
+            })
+        except Exception:
+            pass
+            
+    return results
 
 @app.get("/api/v1/experiments/{id}")
 def get_experiment(id: str):
@@ -438,8 +467,9 @@ def stop_experiment(id: str):
     experiment_manager.stop(id)
         
     # Dump artifacts
-    import pandas as pd
     import os
+
+    import pandas as pd
     results_dir = Path(project_root) / 'experiments' / 'results'
     os.makedirs(results_dir, exist_ok=True)
     
@@ -450,8 +480,7 @@ def stop_experiment(id: str):
     if orchestrator.routing_decisions:
         import json
         with open(results_dir / f"{id}_routing_decisions.jsonl", "w") as f:
-            for decision in orchestrator.routing_decisions:
-                f.write(json.dumps(decision) + "\n")
+            f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
                 
     return {"status": "stopped", "experiment": id}
 

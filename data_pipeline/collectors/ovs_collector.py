@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
-import subprocess
-import time
-import json
 import csv
 import os
+import subprocess
+import time
 from datetime import datetime
+
 
 class OVSCollector:
     """

@@ -1,10 +1,10 @@
-import pytest
-import sqlite3
 import os
+import sqlite3
 import sys
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from backend.app.services.orchestrator import Orchestrator
+
 
 def test_sqlite_persistence():
     orchestrator = Orchestrator()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time
+
 import requests
-import sys
 
 API_URL = "http://localhost:8000/api/v1/experiments"
 POLICIES = ["static", "reactive", "predictive"]

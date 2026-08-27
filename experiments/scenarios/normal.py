@@ -9,8 +9,10 @@ project_root = str(Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.append(project_root)
 
+from mininet.log import info, setLogLevel
+
 from network.topologies.small_test import create_small_network
-from mininet.log import setLogLevel, info
+
 
 def run_normal():
     setLogLevel('info')

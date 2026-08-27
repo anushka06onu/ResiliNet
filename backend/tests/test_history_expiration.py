@@ -1,10 +1,10 @@
-import pytest
-import sys
 import os
+import sys
 from datetime import datetime, timedelta
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from data_pipeline.feature_engineering import FeaturePipeline
+
 
 def test_history_expiration():
     pipeline = FeaturePipeline(window_seconds=30.0)

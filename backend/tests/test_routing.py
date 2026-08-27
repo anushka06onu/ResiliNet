@@ -1,11 +1,13 @@
-import pytest
-from unittest.mock import patch, MagicMock
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # We must add network to the path since we run pytest from backend
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from network.routing.predictive_routing import PredictiveRouter
+
 
 @pytest.fixture
 def router():

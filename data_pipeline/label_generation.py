@@ -1,5 +1,5 @@
 import pandas as pd
-import numpy as np
+
 
 def generate_sla_labels(df, group_cols=None, horizon_windows=6, loss_threshold=10):
     """

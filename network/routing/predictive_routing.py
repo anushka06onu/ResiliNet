@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
-import networkx as nx
 import json
+import logging
 import os
 import subprocess
 import time
-import logging
+
+import networkx as nx
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
-import subprocess
-import time
 import json
 import os
 import signal
+import subprocess
+import time
 from datetime import datetime
-
 from pathlib import Path
+
 
 def run_experiment(scenario, duration, seed, experiment_id=None):
     if not experiment_id:

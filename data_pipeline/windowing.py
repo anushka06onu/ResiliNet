@@ -1,5 +1,6 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 
 def create_windows(df, window_size='5s', time_col='timestamp'):
     """

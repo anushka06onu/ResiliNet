@@ -1,9 +1,9 @@
-import uuid
-import threading
-from datetime import datetime
-import sys
-import os
 import logging
+import os
+import sys
+import threading
+import uuid
+from datetime import datetime
 
 # Ensure network is accessible
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -18,8 +18,8 @@ class Orchestrator:
     """
     def __init__(self):
         # We load a topology at startup or receive it via ingest endpoint
-        from pathlib import Path
         import os
+        from pathlib import Path
         project_root = Path(os.path.dirname(__file__)).resolve().parents[2]
         topology_path = project_root / 'frontend' / 'public' / 'topology.json'
 
@@ -144,9 +144,7 @@ class Orchestrator:
                     is_violation_actual = event.get("payload", {}).get("is_violation_actual", False)
                     evaluate = False
                     
-                    if self.policy == "predictive" and is_violation:
-                        evaluate = True
-                    elif self.policy == "reactive" and is_violation_actual:
+                    if self.policy == "predictive" and is_violation or self.policy == "reactive" and is_violation_actual:
                         evaluate = True
                         
                     if evaluate:

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
-from mininet.net import Mininet
-from mininet.node import Controller, OVSKernelSwitch, RemoteController
-from mininet.cli import CLI
-from mininet.log import setLogLevel, info
-from mininet.link import TCLink
-import time
 import csv
 import os
-import json
+import time
+
 import requests
+from mininet.link import TCLink
+from mininet.log import info, setLogLevel
+from mininet.net import Mininet
+from mininet.node import OVSKernelSwitch, RemoteController
+
 
 def create_small_network():
     """Create a minimal network with 2 switches and 4 hosts."""

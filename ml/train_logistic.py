@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
-import pandas as pd
+import os
+import pickle
+
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-import pickle
-import os
+from sklearn.preprocessing import StandardScaler
+
 
 def load_data(file_path):
     # In a real run, this would load the output from data_pipeline
