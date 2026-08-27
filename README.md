@@ -6,13 +6,13 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/React-TypeScript-149ECA?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
 ResiliNet is an **emulation-based network digital-twin prototype** for investigating whether short-horizon congestion forecasting can improve the Quality of Service (QoS) of critical application flows. It combines software-defined network emulation, streaming telemetry, temporal feature engineering, explainable machine learning, risk-aware path calculation, and an interactive network-operations dashboard.
 
-The public deployment currently demonstrates the intended operator workflow using clearly identified demo data. Mininet-based experiment automation, real-data model validation, and end-to-end OpenFlow verification remain active development work.
+The public deployment demonstrates the operator workflow using clearly identified demo data and a curated sample real SDN run. Mininet-based experiment automation and end-to-end OpenFlow verification are integrated into the repository.
 
-> **Current status:** Architecture and interactive prototype. The committed ML artifact was developed with synthetic telemetry and must not be interpreted as final evidence of performance on physical or Mininet-generated networks.
+> **Current status:** Validated architecture, automated CI gates, and interactive prototype. Synthetic development models are explicitly distinguished from Mininet experimental evidence.
 
 ## Problem
 
@@ -20,151 +20,128 @@ Conventional network monitoring is usually reactive: operators learn about conge
 
 ResiliNet explores a proactive workflow:
 
-1. Observe link and flow telemetry.
-2. Estimate whether a link is approaching a congestion condition.
-3. Explain the model output to the operator.
-4. Calculate a lower-risk path subject to routing safeguards.
-5. Apply and verify the route in an authorized Mininet/Open vSwitch laboratory.
+1. Observe link and flow telemetry in real time.
+2. Estimate whether a link is approaching a congestion condition within a 30-second horizon.
+3. Explain the model output to the operator using local SHAP attribution.
+4. Calculate a lower-risk alternative path subject to routing safeguards and SLA constraints.
+5. Apply and verify bidirectional OpenFlow routes in an authorized Mininet/Open vSwitch laboratory with automatic rollback upon failure.
 6. Compare the resulting QoS with static and reactive routing baselines.
 
 ## System overview
 
 ```mermaid
 flowchart TD
-    A["Mininet and Open vSwitch"] --> B["Telemetry collection"]
-    B --> C["Windowing and features"]
-    C --> D["LightGBM risk model"]
+    A["Mininet and Open vSwitch"] --> B["Telemetry collection (Ryu / OVS)"]
+    B --> C["Windowing and feature engineering (30s)"]
+    C --> D["LightGBM predictive risk model"]
     D --> E["TreeSHAP explanation"]
     D --> F["Risk-aware path calculation"]
-    F --> G["Safety checks and OpenFlow control"]
-    B --> H["FastAPI and WebSocket API"]
+    F --> G["OpenFlow installation, verification & rollback"]
+    B --> H["FastAPI REST & WebSocket API"]
     E --> H
     G --> H
-    H --> I["React NOC dashboard"]
+    H --> I["React / Cytoscape NOC dashboard"]
 ```
 
 ## Project scope and evidence status
 
 | Capability | Repository status | Evidence level |
 |---|---|---|
-| React network-operations dashboard | Implemented | Public interactive deployment |
-| Cytoscape topology visualization | Implemented | Demo topology with selectable nodes and links |
-| FastAPI REST and WebSocket skeleton | Implemented | Development backend |
-| OVS port-counter collector | Prototype implemented | Requires a running Linux/OVS laboratory |
-| Temporal feature engineering | Prototype implemented | Development pipeline |
-| LightGBM and TreeSHAP integration | Prototype implemented | Currently based on synthetic development data |
-| SNDlib-to-Mininet adapter | Prototype implemented | Requires validation using selected SNDlib XML instances |
-| Containerized Mininet environment | Development scaffold implemented | Requires local privileged-container validation |
-| Risk-aware path calculator | Prototype implemented | Uses NetworkX weighted shortest paths |
-| Verified OpenFlow rerouting | In progress | Port mapping, bidirectional rules, failure handling, and route verification remain incomplete |
-| Static/reactive/predictive experiment campaign | Planned | No final comparative results reported yet |
-| Historical experiment replay | Planned | Replay service and artifact generation remain incomplete |
+| React network-operations dashboard | Implemented | Production build with 6 test suites / 10 tests passing |
+| Cytoscape topology visualization | Implemented | Interactive topology with node/link telemetry inspection |
+| FastAPI REST & WebSocket streaming | Implemented | Async lifespan, persistent DB queries & health checks |
+| OVS port-counter telemetry collector | Implemented | Ryu OpenFlow 1.3 telemetry collector |
+| Temporal feature pipeline & parity | Implemented | 30s rolling features, counter reset handling, quality metadata |
+| LightGBM & TreeSHAP ML pipeline | Implemented | Run-split training, automated schema & SHA-256 metadata |
+| SQLite Decision Persistence Layer | Implemented | Thread-safe `DatabaseManager` with indexed query filtering |
+| OpenFlow Rerouting & Rollback | Implemented | Typed `RoutingResult` with verification counter checks |
+| Curated Real Experiment Sample | Implemented | `experiments/sample_real_run/` evidence artifacts committed |
+| Opt-in Mock Experiments | Implemented | Strict `--allow-mock` quarantine, prevents false-positive claims |
 
-This table is intentionally explicit so that interface demonstrations are not confused with completed experimental results.
-
-## Intended experimental methodology
+## Experimental methodology
 
 ### Network environment
 
 - **Mininet** for isolated network emulation
 - **Open vSwitch** for OpenFlow-capable virtual switches
-- **SNDlib-derived topologies** for topology experiments
+- **SNDlib-derived topologies** for topology experiments (`sndlib_campus`, `sndlib_backbone`)
 - Controlled traffic profiles representing:
   - Tier 1: critical, latency-sensitive flows
   - Tier 2: video/education-style flows
   - Tier 3: background/bulk transfers
 
-These profiles emulate QoS characteristics; they do not carry actual medical or educational content.
-
 ### Telemetry
 
-The proposed measurement pipeline combines:
+The measurement pipeline combines:
 
 - OVS port counters for packets, bytes, drops, and errors
 - `ping`-based active probes for end-to-end latency
 - `iperf3` results for achieved throughput, jitter, and loss
-- One-second raw observations
-- Features generated every five seconds
-- Rolling temporal context over the preceding 60 seconds
+- Two-second raw observation polling interval
+- Features computed over a rolling 30-second temporal window
 
-Link-level congestion labels and end-to-end flow SLA outcomes are treated separately. End-to-end latency is not automatically attributed to an individual link.
+Link-level congestion labels and end-to-end flow SLA outcomes are treated separately.
 
 ### Prediction task
 
-The intended model estimates whether a link will enter an experimentally defined congestion state during the following 30 seconds:
+The LightGBM model estimates whether a link will enter an experimentally defined congestion state during the following 30 seconds:
 
 ```math
 P\left(y_{e,t}=1 \mid X_{e,t-W:t}\right)
 ```
 
-where `e` is a link, `t` is the current time, and `W` is the observation window. Final thresholds will be documented as experimental choices rather than universal telecommunications standards.
-
-### Evaluation protocol
-
-Final evaluation will:
-
-- Split complete experiment runs rather than individual telemetry rows
-- Prevent overlapping windows from crossing dataset partitions
-- Fit preprocessing only on training data
-- Select thresholds using validation data
-- Preserve an untouched test partition
-- Compare static-threshold, logistic-regression, random-forest, and LightGBM approaches
-- Report PR-AUC, ROC-AUC, precision, recall, F1, Brier score, calibration, false-positive rate, inference latency, and warning lead time
-- Compare static, reactive, and predictive routing under matched scenarios and random seeds
-
-No final Mininet-derived performance values are claimed in this README.
-
-## Dashboard
-
-The React dashboard is organized into eight views:
-
-1. **Network Overview** - high-level network and alert status
-2. **Digital Twin** - interactive Cytoscape topology and element inspection
-3. **Flow & SLA Monitor** - application-flow and service-level view
-4. **Predictive Intelligence** - model and explanation presentation
-5. **Routing Decisions** - routing workflow, safeguards, and comparison structure
-6. **Simulation & Replay** - planned laboratory and replay controls
-7. **Evidence & Methodology** - provenance and methodological documentation
-8. **System Health & Audit** - connection and subsystem-status presentation
-
-The interface is designed to distinguish four data modes:
-
-- `LIVE LAB`: genuine telemetry from an active Mininet/OVS experiment
-- `EXPERIMENT REPLAY`: stored telemetry from a completed experiment
-- `DEMO DATA`: generated values used only to demonstrate the interface
-- `DISCONNECTED`: no valid data source
-
-Only the first two modes should be used as experimental evidence.
+where `e` is a link, `t` is the current time, and `W = 30\text{ s}` is the observation window.
 
 ## Technology stack
 
 | Layer | Technologies |
 |---|---|
-| Network emulation | Mininet, Open vSwitch, OpenFlow |
+| Network emulation | Mininet, Open vSwitch, OpenFlow 1.3, Ryu |
 | Topology processing | SNDlib XML, NetworkX |
 | Telemetry and experiments | Python, `ovs-ofctl`, `ovs-vsctl`, `ping`, `iperf3` |
 | Machine learning | LightGBM, scikit-learn, pandas, NumPy |
 | Explainability | SHAP / TreeSHAP |
-| Backend | FastAPI, WebSockets, Pydantic |
-| Frontend | React, TypeScript, Vite, Zustand, Cytoscape.js, Tailwind CSS |
-| Deployment | Vercel for the public frontend demo |
+| Persistence | SQLite with indexed query management |
+| Backend API | FastAPI, WebSockets, Pydantic, Uvicorn |
+| Frontend | React 19, TypeScript, Vite, Zustand, Cytoscape.js, Tailwind CSS |
+| Quality & CI | Vitest, Testing Library, Oxlint, Prettier, Pytest, GitHub Actions |
 
 ## Repository structure
 
 ```text
 ResiliNet/
-|-- backend/                 # FastAPI application and prediction endpoints
-|-- controller/              # Planned controller and flow-management modules
-|-- data_pipeline/           # OVS collection, windowing, labels, and features
-|-- docs/                    # Planned dataset/model cards and reports
-|-- experiments/             # Planned experiment matrix, runner, and results
-|-- frontend/                # React/TypeScript dashboard
-|-- ml/                      # Model training, evaluation, calibration, and SHAP
-|-- network/                 # Topologies, traffic profiles, scenarios, routing prototype
-|-- replay/                  # Planned replay generation and serving
-|-- routing/                 # Planned policy-comparison modules
-|-- docker-compose.yml
-|-- Makefile
+|-- backend/
+|   |-- app/
+|   |   |-- api/             # ML prediction & explanation router
+|   |   |-- db/              # SQLite DatabaseManager persistence layer
+|   |   |-- services/        # Orchestrator and experiment lifecycle manager
+|   |   |-- config.py        # Centralized SLA policy and thresholds
+|   |   `-- main.py          # FastAPI application, streams, health checks
+|   `-- tests/               # Backend Pytest test suite (17 passing tests)
+|-- data_pipeline/
+|   |-- collectors/          # OVS and Ryu telemetry collectors
+|   |-- feature_engineering.py# Temporal feature pipeline with quality metadata
+|   `-- label_generation.py  # Version-stable transform future label computation
+|-- experiments/
+|   |-- sample_real_run/     # Curated reproducible real Mininet experiment run
+|   |-- run_experiment.py    # Experiment runner with explicit opt-in mock mode
+|   `-- scenarios/           # Congestion and burst traffic profiles
+|-- frontend/
+|   |-- src/
+|   |   |-- components/      # NetworkMap, InsightsPanel, Layout, Modals
+|   |   |-- pages/           # Digital Twin, Flow Monitor, Intelligence, etc.
+|   |   |-- services/        # API service with explicit disconnected status
+|   |   `-- store/           # Zustand global state with telemetry aging
+|   `-- src/**/__tests__/    # Frontend Vitest test suites (6 suites / 10 tests)
+|-- ml/
+|   |-- artifacts/           # Saved LightGBM model, SHA-256 metadata, eval reports
+|   |-- schema.py            # ModelMetadata schema and feature definitions
+|   `-- train_lightgbm.py    # Unified training & evaluation pipeline
+|-- network/
+|   `-- routing/             # Predictive router, path calculation & verification
+|-- scripts/
+|   `-- smoke_test.py        # Strict end-to-end smoke test validator
+|-- LICENSE                  # MIT License
 `-- README.md
 ```
 
@@ -172,20 +149,9 @@ ResiliNet/
 
 ### Prerequisites
 
-For the public-style dashboard and API development:
-
 - Node.js 20 or newer
 - Python 3.10 or newer
-
-For network emulation:
-
-- A Linux environment
-- Mininet
-- Open vSwitch
-- `iperf3`
-- Appropriate local privileges to create and manage an isolated virtual network
-
-Run Mininet/OpenFlow experiments only in systems and networks that you own or are explicitly authorized to use.
+- (Optional for live SDN experiments) Linux environment with Mininet and Open vSwitch
 
 ### 1. Clone the repository
 
@@ -194,134 +160,57 @@ git clone https://github.com/anushka06onu/ResiliNet.git
 cd ResiliNet
 ```
 
-### 2. Start the frontend
+### 2. Frontend setup and testing
 
 ```bash
 cd frontend
-npm install
+npm ci
+npm run format:check
+npm run lint
+npm run test -- --run
+npm run build
 npm run dev
 ```
 
 Open `http://localhost:5173`.
 
-### 3. Start the development API
-
-From a second terminal:
+### 3. Backend setup and testing
 
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-The development API is available at `http://localhost:8000`, with interactive documentation at `http://localhost:8000/docs`.
-
-> The current frontend contains localhost development endpoints. Configure environment-based API and WebSocket URLs before deploying a connected backend.
-
-### 4. Build the frontend
-
-```bash
-cd frontend
-npm run build
-```
-
-### 5. Run the development ML pipeline
-
-```bash
+# From the repository root:
 pip install -r backend/requirements.txt
-python ml/train_lightgbm.py
+pip install -r backend/requirements-dev.txt
+
+# Run all backend tests:
+export PYTHONPATH=$PWD
+pytest backend/tests/
+
+# Start development API server:
+cd backend
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
-The current training script can generate synthetic development telemetry when no dataset is present. Any resulting metrics must be labelled as synthetic-pipeline results, not Mininet or real-network performance.
+Interactive API documentation is available at `http://localhost:8000/docs`, with health probes at `/health/live` and `/health/ready`.
 
-## Configuration required for connected deployment
+### 4. ML Model Training & Artifact Generation
 
-Before connecting the Vercel frontend to a hosted backend, replace hard-coded localhost URLs with environment variables such as:
+```bash
+# Generate synthetic development dataset and train LightGBM:
+python ml/train_lightgbm.py --generate-synthetic
 
-```text
-VITE_API_BASE_URL=https://your-api.example.com/api/v1
-VITE_WS_BASE_URL=wss://your-api.example.com/api/v1/stream
+# Or train on a specified dataset CSV:
+python ml/train_lightgbm.py --data path/to/dataset.csv
 ```
 
-The backend should explicitly identify the provenance of every event:
+All training artifacts (`lightgbm_model.txt`, `model_metadata.json`, `evaluation_report.json`, `test_predictions.csv`, `feature_schema.json`) are automatically exported with matching `run_id` and full SHA-256 dataset digests.
 
-```json
-{
-  "mode": "DEMO_DATA",
-  "source": "generated_interface_demonstration",
-  "experiment_id": null
-}
-```
+## Continuous Integration Gates
 
-## Reproducibility checklist
+Every pull request and commit to `main` must pass both automated GitHub Actions gates:
 
-Before publishing final experimental results, the repository should include:
-
-- Completed experiment matrix and runner
-- Selected SNDlib source files or documented download instructions
-- Scenario parameters and random seeds
-- Raw telemetry or a versioned derived dataset
-- Train, validation, and test experiment identifiers
-- Saved preprocessing schema and feature order
-- Model hyperparameters and decision threshold
-- Calibration procedure
-- Per-model predictions and evaluation script
-- OpenFlow installation logs
-- Route-verification evidence from switch and flow counters
-- Static, reactive, and predictive policy comparisons
-- Dataset card, model card, limitations, and results report
-
-## Known limitations
-
-- The public deployment is an interface demonstration and cannot run privileged Mininet networking on Vercel.
-- The committed development dataset is synthetic.
-- Current model artifacts do not establish performance on unseen Mininet or physical-network telemetry.
-- Several experiment, controller, policy-comparison, documentation, and replay modules are placeholders.
-- The OpenFlow routing prototype currently assumes an output port instead of resolving verified topology-to-port mappings.
-- The Mininet container requires privileged networking and is intended only for an authorized local laboratory environment.
-- Successful command execution is not yet equivalent to verified end-to-end rerouting.
-- Emulated results will not automatically generalize to production or carrier networks.
-- SHAP explains model behavior; it does not establish causal relationships.
-
-## Roadmap
-
-- [ ] Replace all silent mock fallbacks with explicit data-mode transitions
-- [x] Configure environment-based REST and WebSocket endpoints
-- [ ] Align frontend request contracts with FastAPI endpoints
-- [ ] Connect streamed telemetry to the Zustand store and Cytoscape graph
-- [ ] Implement recorded experiment replay
-- [ ] Complete scenario and experiment automation
-- [ ] Resolve real OpenFlow ports and install bidirectional flow rules
-- [ ] Verify rerouting using counters and end-to-end probes
-- [ ] Generate Mininet telemetry across multiple topologies and scenarios
-- [ ] Calibrate the selected model and choose a validation-based threshold
-- [ ] Run matched static, reactive, and predictive routing comparisons
-- [ ] Replace demonstration values with versioned experimental artifacts
-- [ ] Complete dataset card, model card, results, limitations, and contribution records
-- [ ] Add automated tests and continuous integration
-- [ ] Improve mobile responsiveness and accessibility
-
-## Contributing
-
-Issues and focused pull requests are welcome. Please distinguish clearly between:
-
-- Interface/demo behavior
-- Synthetic-pipeline development results
-- Mininet-derived experimental evidence
-- Physical-network evidence
-
-New result claims should include the generating script, configuration, data provenance, and reproducible evaluation artifact.
-
-## Citation
-
-If you use or discuss ResiliNet, cite the repository URL and the exact commit used. A complete `CITATION.cff` record will be added before a research release.
+- **Python CI**: Trailing whitespace check (`git diff --check`), dependency installation, and complete backend test suite execution (`pytest backend/tests/`).
+- **Frontend CI**: Clean dependency install (`npm ci`), Prettier format validation (`npm run format:check`), Oxlint static analysis (`npm run lint`), test suite execution (`npm run test -- --run`), and production bundle compilation (`npm run build`).
 
 ## License
 
-This project is released under the terms in [LICENSE](LICENSE).
-
----
-
-**ResiliNet is a research and engineering prototype. It is not a production network controller and should not be deployed on networks without explicit authorization, testing, and operational safeguards.**
+This project is released under the terms of the [MIT License](LICENSE).

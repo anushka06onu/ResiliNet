@@ -328,18 +328,38 @@ def get_current_topology():
 
 @app.get("/api/v1/links/{link_id}")
 def get_link_details(link_id: str):
-    capacity = "10Mbps"
+    capacity_mbps = 10.0
+    capacity_source = "topology_configuration"
     if active_live_topology:
         for link in active_live_topology.get("links", []):
             src, tgt = link.get("source"), link.get("target")
             if f"{src}-{tgt}" == link_id or f"{tgt}-{src}" == link_id:
-                capacity = link.get("capacity", "10Mbps")
+                raw_cap = link.get("capacity", 10.0)
+                if isinstance(raw_cap, str) and "mbps" in raw_cap.lower():
+                    try:
+                        capacity_mbps = float(raw_cap.lower().replace("mbps", "").strip())
+                    except ValueError:
+                        capacity_mbps = 10.0
+                elif isinstance(raw_cap, (int, float)):
+                    capacity_mbps = float(raw_cap)
+                capacity_source = "active_topology"
                 break
-    
+
     features = latest_features.get(link_id, {})
-    # Assuming rx_bytes is bytes per second, convert to Mbps
-    throughput = features.get("rx_bytes", 0) * 8 / 1_000_000 if features else 0.0
-    return {"link_id": link_id, "capacity": capacity, "current_throughput": f"{throughput:.2f} Mbps"}
+    throughput_mbps = features.get("rx_bytes", 0.0) * 8 / 1_000_000 if features else 0.0
+    loss_percent = features.get("loss_percent", 0.0) if features else 0.0
+    latency_ms = features.get("control_plane_rtt_ms", 0.0) if features else 0.0
+    utilization_ratio = throughput_mbps / capacity_mbps if capacity_mbps > 0 else 0.0
+
+    return {
+        "link_id": link_id,
+        "capacity_mbps": float(capacity_mbps),
+        "capacity_source": capacity_source,
+        "throughput_mbps": round(float(throughput_mbps), 2),
+        "loss_percent": round(float(loss_percent), 2),
+        "latency_ms": round(float(latency_ms), 2),
+        "utilization_ratio": round(float(utilization_ratio), 4)
+    }
 
 @app.get("/api/v1/links/{link_id}/latest-prediction")
 def get_latest_prediction(link_id: str):
