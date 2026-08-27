@@ -2,16 +2,16 @@
 import { useState, useEffect } from 'react';
 import { Route, CheckCircle, XCircle } from 'lucide-react';
 import { getRoutingDecisions } from '../services/api';
+import type { RoutingResult } from '../services/api';
 
 const RoutingDecisions = () => {
-  const [decisions, setDecisions] = useState<any[]>([]);
+  const [decisions, setDecisions] = useState<RoutingResult[]>([]);
   
   useEffect(() => {
     const fetchDecisions = async () => {
       try {
         const data = await getRoutingDecisions();
-        // Sort descending by timestamp
-        const sorted = data.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        const sorted = data.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         setDecisions(sorted);
       } catch (err) {
         console.error("Failed to fetch routing decisions", err);

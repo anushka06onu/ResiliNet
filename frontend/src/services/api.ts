@@ -3,6 +3,28 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api
 // Global state to track if we are in live mode or simulation mode
 export let isSimulationMode = false;
 
+export interface ExperimentConfig {
+  scenario: 'normal' | 'gradual_congestion' | 'sudden_surge';
+  duration: number;
+  seed: number;
+  policy: 'static' | 'reactive' | 'predictive';
+}
+
+export interface RoutingResult {
+  decision_id: string;
+  experiment_id?: string;
+  flow_id: string;
+  timestamp: string;
+  risk_before: number | null;
+  risk_after: number | null;
+  original_path: string[];
+  proposed_path: string[] | null;
+  safeguard_result: string;
+  installation_status: string;
+  verification_status: string;
+  outcome_status: string;
+}
+
 // Mock data matching Phase 3 topology
 const MOCK_TOPOLOGY = {
   nodes: [
@@ -102,7 +124,7 @@ export const getFlows = async () => {
   }
 };
 
-export const getRoutingDecisions = async () => {
+export const getRoutingDecisions = async (): Promise<RoutingResult[]> => {
   try {
     if (isSimulationMode) throw new Error('Force mock');
     const res = await fetch(`${API_BASE}/routing/decisions`);
@@ -119,6 +141,8 @@ export const getRoutingDecisions = async () => {
         original_path: ["s1", "s2", "s4"],
         proposed_path: ["s1", "s3", "s4"],
         installation_status: "success",
+        verification_status: "success",
+        outcome_status: "success",
         safeguard_result: "Link s2-s4 Risk 85%"
       },
       {
@@ -130,13 +154,15 @@ export const getRoutingDecisions = async () => {
         original_path: ["s2", "s5", "s8"],
         proposed_path: ["s2", "s6", "s8"],
         installation_status: "failed",
+        verification_status: "failed",
+        outcome_status: "failed",
         safeguard_result: "Verification failed, triggered rollback"
       }
     ];
   }
 };
 
-export const startExperiment = async (config: any) => {
+export const startExperiment = async (config: ExperimentConfig) => {
   const exp_id = `exp_${config.policy}_${config.scenario}_ui`;
   const res = await fetch(`${API_BASE}/experiments/${exp_id}/start`, {
     method: 'POST',

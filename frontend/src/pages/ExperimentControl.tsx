@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Play, Square, Pause, Settings, RefreshCw, FastForward } from 'lucide-react';
 import { startExperiment, stopExperiment, getExperiments } from '../services/api';
+import type { ExperimentConfig } from '../services/api';
 
 const ExperimentControl = () => {
   const [status, setStatus] = useState('Stopped');
-  const [scenario, setScenario] = useState('normal');
-  const [policy, setPolicy] = useState('predictive');
+  const [scenario, setScenario] = useState<ExperimentConfig['scenario']>('normal');
+  const [policy, setPolicy] = useState<ExperimentConfig['policy']>('predictive');
   const [currentExpId, setCurrentExpId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -83,7 +84,7 @@ const ExperimentControl = () => {
               <label className="block mb-1 text-slate-400">Routing Policy</label>
               <select 
                 value={policy}
-                onChange={(e) => setPolicy(e.target.value)}
+                onChange={(e) => setPolicy(e.target.value as ExperimentConfig['policy'])}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500"
               >
                 <option value="static">Static (No Rerouting)</option>
@@ -104,7 +105,7 @@ const ExperimentControl = () => {
               <label className="block mb-1 text-slate-400">Traffic Scenario</label>
                             <select 
                 value={scenario}
-                onChange={(e) => setScenario(e.target.value)}
+                onChange={(e) => setScenario(e.target.value as ExperimentConfig['scenario'])}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500"
               >
                 <option value="normal">Normal Operations</option>
@@ -113,14 +114,7 @@ const ExperimentControl = () => {
               </select>
             </div>
 
-            <div>
-              <label className="block mb-1 text-slate-400">Routing Policy</label>
-              <select className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-white outline-none focus:border-emerald-500">
-                <option>ResiliNet (Predictive + OpenFlow)</option>
-                <option>Reactive Routing</option>
-                <option>Static Shortest Path</option>
-              </select>
-            </div>
+
 
             <div>
               <label className="block mb-1 text-slate-400">Inject Link Failure</label>

@@ -85,7 +85,14 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
                 'target-arrow-shape': 'none',
                 'overlay-opacity': 0,
                 'transition-property': 'line-color, width',
-                'transition-duration': 300
+                'transition-duration': 300,
+                'label': 'data(label)',
+                'font-size': '9px',
+                'color': '#94a3b8',
+                'text-background-opacity': 0.8,
+                'text-background-color': '#0f172a',
+                'text-background-padding': '2px',
+                'text-background-shape': 'roundrectangle'
               }
             },
             {
@@ -188,6 +195,20 @@ const NetworkMap: React.FC<NetworkMapProps> = ({ onSelectElement }) => {
         // Only update if not selected (to preserve selection color)
         if (!edge.selected()) {
           edge.style({ 'line-color': color, 'width': width });
+        }
+        
+        // Add dynamic metrics label
+        let labelText = '';
+        if (state.metrics) {
+          if (state.metrics.control_plane_rtt_ms !== undefined) {
+             labelText += `${state.metrics.control_plane_rtt_ms.toFixed(1)}ms\n`;
+          }
+          if (state.metrics.loss_percent !== undefined) {
+             labelText += `${state.metrics.loss_percent.toFixed(1)}% loss`;
+          }
+        }
+        if (labelText) {
+          edge.data('label', labelText);
         }
       }
     });

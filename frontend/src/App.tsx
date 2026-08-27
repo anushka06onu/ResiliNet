@@ -1,15 +1,23 @@
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import { useStore } from './store/useStore';
-import NetworkOverview from './pages/NetworkOverview';
-import DigitalTwin from './pages/DigitalTwin';
-import FlowMonitor from './pages/FlowMonitor';
-import Intelligence from './pages/Intelligence';
-import RoutingDecisions from './pages/RoutingDecisions';
-import ExperimentControl from './pages/ExperimentControl';
-import Methodology from './pages/Methodology';
-import SystemHealth from './pages/SystemHealth';
+
+const NetworkOverview = lazy(() => import('./pages/NetworkOverview'));
+const DigitalTwin = lazy(() => import('./pages/DigitalTwin'));
+const FlowMonitor = lazy(() => import('./pages/FlowMonitor'));
+const Intelligence = lazy(() => import('./pages/Intelligence'));
+const RoutingDecisions = lazy(() => import('./pages/RoutingDecisions'));
+const ExperimentControl = lazy(() => import('./pages/ExperimentControl'));
+const Methodology = lazy(() => import('./pages/Methodology'));
+const SystemHealth = lazy(() => import('./pages/SystemHealth'));
+
+// Fallback for lazy loading
+const Loader = () => (
+  <div className="flex h-full w-full items-center justify-center bg-slate-950">
+    <div className="text-emerald-500 animate-pulse">Loading View...</div>
+  </div>
+);
 
 function App() {
   const { setSystemStatus, setWsConnected, updateTelemetry, checkDataModeExpiry } = useStore();
@@ -56,14 +64,14 @@ function App() {
     <Router>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<NetworkOverview />} />
-          <Route path="twin" element={<DigitalTwin />} />
-          <Route path="flows" element={<FlowMonitor />} />
-          <Route path="intelligence" element={<Intelligence />} />
-          <Route path="routing" element={<RoutingDecisions />} />
-          <Route path="control" element={<ExperimentControl />} />
-          <Route path="methodology" element={<Methodology />} />
-          <Route path="health" element={<SystemHealth />} />
+          <Route index element={<Suspense fallback={<Loader />}><NetworkOverview /></Suspense>} />
+          <Route path="twin" element={<Suspense fallback={<Loader />}><DigitalTwin /></Suspense>} />
+          <Route path="flows" element={<Suspense fallback={<Loader />}><FlowMonitor /></Suspense>} />
+          <Route path="intelligence" element={<Suspense fallback={<Loader />}><Intelligence /></Suspense>} />
+          <Route path="routing" element={<Suspense fallback={<Loader />}><RoutingDecisions /></Suspense>} />
+          <Route path="control" element={<Suspense fallback={<Loader />}><ExperimentControl /></Suspense>} />
+          <Route path="methodology" element={<Suspense fallback={<Loader />}><Methodology /></Suspense>} />
+          <Route path="health" element={<Suspense fallback={<Loader />}><SystemHealth /></Suspense>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

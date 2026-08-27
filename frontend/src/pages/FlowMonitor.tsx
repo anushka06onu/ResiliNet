@@ -76,9 +76,9 @@ const FlowMonitor = () => {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <span className={`w-8 ${parseInt(flow.risk || '0%' || '0') > 50 ? 'text-amber-400' : 'text-slate-400'}`}>{flow.risk || '0%'}</span>
+                    <span className={`w-8 ${parseInt(flow.risk || '0') > 50 ? 'text-amber-400' : 'text-slate-400'}`}>{flow.risk || '0%'}</span>
                     <div className="flex-1 h-1.5 bg-slate-800 rounded overflow-hidden">
-                      <div className={`h-full ${parseInt(flow.risk || '0%' || '0') > 80 ? 'bg-red-500' : parseInt(flow.risk || '0%' || '0') > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{width: flow.risk || '0%'}}></div>
+                      <div className={`h-full ${parseInt(flow.risk || '0') > 80 ? 'bg-red-500' : parseInt(flow.risk || '0') > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{width: flow.risk || '0%'}}></div>
                     </div>
                   </div>
                 </td>
