@@ -7,6 +7,9 @@ import asyncio
 import random
 from datetime import datetime
 from pydantic import BaseModel
+from pathlib import Path
+
+project_root = Path(__file__).resolve().parents[2]
 
 # Import routers
 try:
@@ -379,8 +382,9 @@ def start_experiment(id: str, config: ExperimentConfig = None):
     if id in active_experiments and active_experiments[id].poll() is None:
         return {"status": "error", "message": "Experiment already running"}
         
-    cmd = ["python3", "experiments/run_experiment.py", "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed)]
-    proc = subprocess.Popen(cmd)
+    experiment_script = Path(project_root) / "experiments" / "run_experiment.py"
+    cmd = ["python3", str(experiment_script), "--scenario", config.scenario, "--duration", str(config.duration), "--seed", str(config.seed)]
+    proc = subprocess.Popen(cmd, cwd=project_root)
     active_experiments[id] = proc
     return {"status": "started", "experiment": id, "scenario": config.scenario}
 
@@ -397,15 +401,16 @@ def stop_experiment(id: str):
     # Dump artifacts
     import pandas as pd
     import os
-    os.makedirs('experiments/results', exist_ok=True)
+    results_dir = Path(project_root) / 'experiments' / 'results'
+    os.makedirs(results_dir, exist_ok=True)
     
     if telemetry_history:
-        pd.DataFrame(telemetry_history).to_csv(f"experiments/results/{id}_telemetry.csv", index=False)
+        pd.DataFrame(telemetry_history).to_csv(results_dir / f"{id}_telemetry.csv", index=False)
     if prediction_history:
-        pd.DataFrame(prediction_history).to_csv(f"experiments/results/{id}_predictions.csv", index=False)
+        pd.DataFrame(prediction_history).to_csv(results_dir / f"{id}_predictions.csv", index=False)
     if orchestrator.routing_decisions:
         import json
-        with open(f"experiments/results/{id}_routing_decisions.jsonl", "w") as f:
+        with open(results_dir / f"{id}_routing_decisions.jsonl", "w") as f:
             for decision in orchestrator.routing_decisions:
                 f.write(json.dumps(decision) + "\n")
                 

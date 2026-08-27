@@ -18,7 +18,12 @@ class Orchestrator:
     """
     def __init__(self):
         # We load a topology at startup or receive it via ingest endpoint
-        self.router = PredictiveRouter(topology_json='frontend/public/topology.json')
+        from pathlib import Path
+        import os
+        project_root = Path(os.path.dirname(__file__)).resolve().parents[2]
+        topology_path = project_root / 'frontend' / 'public' / 'topology.json'
+        
+        self.router = PredictiveRouter(topology_json=str(topology_path))
         self.flows = {}
         self.flow_locks = {}
         self.routing_decisions = []
