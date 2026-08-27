@@ -172,7 +172,7 @@ class PredictiveRouter:
                 rollback_error=res.get("rollback_error")
             )
 
-    def _install_path(self, path, nw_src, nw_dst, priority, cookie, installed_rules):
+    def _install_path(self, path, nw_src, nw_dst, priority, cookie, installed_rules, idle_timeout=30, hard_timeout=120):
         """Helper to install a single directional path and track installed rules for rollback."""
         for i in range(len(path) - 1):
             current_node = path[i]
@@ -184,9 +184,14 @@ class PredictiveRouter:
                 return False
             
             if 'switch' in self.graph.nodes[current_node].get('type', 'switch'):
+                flow_spec = (
+                    f"cookie={cookie},priority={priority},"
+                    f"idle_timeout={idle_timeout},hard_timeout={hard_timeout},"
+                    f"ip,nw_src={nw_src},nw_dst={nw_dst},actions=output:{out_port}"
+                )
                 cmd = [
                     "sudo", "ovs-ofctl", "add-flow", current_node,
-                    f"cookie={cookie},priority={priority},ip,nw_src={nw_src},nw_dst={nw_dst},actions=output:{out_port}"
+                    flow_spec
                 ]
                 res = subprocess.run(cmd, capture_output=True)
                 if res.returncode != 0:
@@ -195,7 +200,7 @@ class PredictiveRouter:
                 installed_rules.append((current_node, nw_src, nw_dst, priority, cookie, out_port))
         return True
 
-    def install_bidirectional_route(self, forward_path, reverse_path, nw_src, nw_dst, flow_id, priority=100) -> dict:
+    def install_bidirectional_route(self, forward_path, reverse_path, nw_src, nw_dst, flow_id, priority=100, idle_timeout=30, hard_timeout=120) -> dict:
         """
         Physically injects OpenFlow rules into OVS switches along both paths.
         Implements rollback if any installation fails.
@@ -347,6 +352,33 @@ class PredictiveRouter:
                 rollback_success = False
                 rollback_error = res.stderr.decode('utf-8')
         return rollback_success, rollback_error
+
+    def cleanup_flow(self, flow_id: str) -> bool:
+        """Explicitly deletes all OpenFlow rules matching the flow's unique cookie across all switches."""
+        import hashlib
+        cookie = int(hashlib.md5(flow_id.encode()).hexdigest()[:8], 16)
+        success = True
+        for node, data in self.graph.nodes(data=True):
+            if 'switch' in data.get('type', 'switch'):
+                cmd = ["sudo", "ovs-ofctl", "del-flows", node, f"cookie={cookie}/-1"]
+                res = subprocess.run(cmd, capture_output=True)
+                if res.returncode != 0:
+                    logging.warning(f"Failed to delete flow rules for {flow_id} on {node}")
+                    success = False
+        return success
+
+    def cleanup_all_flows(self) -> bool:
+        """Deletes all custom routing rules installed across all switches."""
+        logging.info("Cleaning up all custom OpenFlow rules on switches...")
+        success = True
+        for node, data in self.graph.nodes(data=True):
+            if 'switch' in data.get('type', 'switch'):
+                cmd = ["sudo", "ovs-ofctl", "del-flows", node, "table=0"]
+                res = subprocess.run(cmd, capture_output=True)
+                if res.returncode != 0:
+                    logging.warning(f"Failed to clear table 0 on {node}")
+                    success = False
+        return success
 
 if __name__ == '__main__':
     router = PredictiveRouter()

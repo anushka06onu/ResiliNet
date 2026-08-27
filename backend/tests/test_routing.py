@@ -171,3 +171,33 @@ def test_evaluate_and_reroute_verification_failure_and_rollback(mock_run, router
     rollbacks = [c for c in calls if "del-flows" in c[0][0]]
     assert len(rollbacks) == 4
 
+
+@patch('network.routing.predictive_routing.subprocess.run')
+def test_cleanup_flow(mock_run, router):
+    mock_res = MagicMock()
+    mock_res.returncode = 0
+    mock_run.return_value = mock_res
+
+    res = router.cleanup_flow("flow_cleanup_test")
+    assert res is True
+    # Router has 3 switches (s1, s2, s3), so 3 del-flows calls
+    assert mock_run.call_count == 3
+    for call in mock_run.call_args_list:
+        cmd_str = " ".join(call[0][0])
+        assert "del-flows" in cmd_str
+        assert "cookie=" in cmd_str
+
+
+@patch('network.routing.predictive_routing.subprocess.run')
+def test_cleanup_all_flows(mock_run, router):
+    mock_res = MagicMock()
+    mock_res.returncode = 0
+    mock_run.return_value = mock_res
+
+    res = router.cleanup_all_flows()
+    assert res is True
+    assert mock_run.call_count == 3
+    for call in mock_run.call_args_list:
+        cmd_str = " ".join(call[0][0])
+        assert "del-flows" in cmd_str
+        assert "table=0" in cmd_str
