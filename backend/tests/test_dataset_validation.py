@@ -170,3 +170,50 @@ def test_sample_real_run_manifest_provenance():
     procs = manifest.get("process_results", {})
     for proc_name, exit_code in procs.items():
         assert exit_code == 0, f"Process {proc_name} returned non-zero exit code {exit_code}"
+
+
+def test_mock_experiment_execution_and_provenance(tmp_path):
+    """Verify mock experiment execution produces isolated artifacts and transparent metadata."""
+    import json
+    from pathlib import Path
+    from experiments.run_experiment import run_experiment
+
+    exp_id = "test_mock_provenance_run"
+    run_experiment(
+        scenario="normal",
+        duration=1,
+        seed=42,
+        experiment_id=exp_id,
+        policy="predictive",
+        allow_mock=True
+    )
+
+    project_root = Path(__file__).resolve().parents[2]
+    res_dir = project_root / "experiments" / "results" / exp_id
+    manifest_path = res_dir / "manifest.json"
+    sums_path = res_dir / "SHA256SUMS"
+
+    assert manifest_path.exists()
+    assert sums_path.exists()
+    assert (res_dir / "telemetry.csv").exists()
+    assert (res_dir / "predictions.csv").exists()
+    assert (res_dir / "routing_decisions.jsonl").exists()
+    assert (res_dir / "controller.log").exists()
+    assert (res_dir / "scenario.log").exists()
+
+    with open(manifest_path, "r") as f:
+        manifest = json.load(f)
+
+    assert manifest["mode"] == "MOCK_TEST"
+    assert manifest["status"] == "fixture_generated"
+    assert manifest["real_experiment"] is False
+    assert manifest["data_origin"] == "mock"
+    assert manifest["evidence_scope"] == "pipeline_testing"
+    assert manifest["predictive_performance_validated"] is False
+    assert manifest["requested_policy"] == "predictive"
+    assert manifest["effective_policy"] == "predictive"
+    assert manifest["policy_implementation"] == "PredictiveRoutingPolicy"
+
+    # Cleanup created mock folder to keep worktree clean
+    import shutil
+    shutil.rmtree(res_dir)

@@ -201,3 +201,71 @@ def test_cleanup_all_flows(mock_run, router):
         cmd_str = " ".join(call[0][0])
         assert "del-flows" in cmd_str
         assert "table=0" in cmd_str
+
+
+def test_policy_behavioral_differences(router):
+    """
+    Verify observable behavioral differences across the three policies:
+    - Static: never reroutes under any condition.
+    - Reactive: ignores predicted violations; reroutes only on actual measured SLA violations.
+    - Predictive: reroutes proactively upon predicted violation before physical failure.
+    """
+    # 1. Static Policy
+    router.set_policy("static")
+    res_static_pred = router.evaluate_and_reroute(
+        flow_id="f_stat", source="s1", target="s3",
+        current_path=["s1", "s2"], nw_src="10.0.0.1", nw_dst="10.0.0.2",
+        is_violation_predicted=True, is_violation_actual=False
+    )
+    assert not res_static_pred.success
+    assert res_static_pred.failure_stage == "POLICY_STATIC_BYPASS"
+
+    res_static_act = router.evaluate_and_reroute(
+        flow_id="f_stat", source="s1", target="s3",
+        current_path=["s1", "s2"], nw_src="10.0.0.1", nw_dst="10.0.0.2",
+        is_violation_predicted=True, is_violation_actual=True
+    )
+    assert not res_static_act.success
+    assert res_static_act.failure_stage == "POLICY_STATIC_BYPASS"
+
+    # 2. Reactive Policy
+    router.set_policy("reactive")
+    # On prediction only without actual violation, reactive must wait/bypass
+    res_reac_pred = router.evaluate_and_reroute(
+        flow_id="f_reac", source="s1", target="s3",
+        current_path=["s1", "s2"], nw_src="10.0.0.1", nw_dst="10.0.0.2",
+        is_violation_predicted=True, is_violation_actual=False
+    )
+    assert not res_reac_pred.success
+    assert res_reac_pred.failure_stage == "POLICY_REACTIVE_WAIT"
+
+    # 3. Predictive Policy
+    router.set_policy("predictive")
+    # On prediction without actual violation, predictive attempts rerouting
+    import hashlib
+    cookie_hex = hex(int(hashlib.md5(b"f_pred").hexdigest()[:8], 16))
+    with patch('network.routing.predictive_routing.subprocess.run') as mock_run:
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = f"cookie={cookie_hex}, priority=100, nw_src=10.0.0.1, nw_dst=10.0.0.2, actions=output:1\n \
+                            cookie={cookie_hex}, priority=100, nw_src=10.0.0.1, nw_dst=10.0.0.2, actions=output:3\n \
+                            cookie={cookie_hex}, priority=100, nw_src=10.0.0.2, nw_dst=10.0.0.1, actions=output:4\n \
+                            cookie={cookie_hex}, priority=100, nw_src=10.0.0.2, nw_dst=10.0.0.1, actions=output:2".encode()
+        mock_run.return_value = mock_res
+        res_pred = router.evaluate_and_reroute(
+            flow_id="f_pred", source="s1", target="s3",
+            current_path=["s1", "s2"], nw_src="10.0.0.1", nw_dst="10.0.0.2",
+            is_violation_predicted=True, is_violation_actual=False
+        )
+        assert res_pred.success
+        assert res_pred.proposed_path == ["s1", "s2", "s3"]
+
+
+def test_policy_validation_and_rejection(router):
+    """Verify router validates allowed policy options and rejects invalid configurations."""
+    for p in ["static", "reactive", "predictive"]:
+        router.set_policy(p)
+        assert router.policy == p
+
+    with pytest.raises(ValueError):
+        router.set_policy("random_invalid_policy")

@@ -25,13 +25,23 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 class PredictiveRouter:
     """
     Calculates routing paths based on ML congestion predictions and installs physical OpenFlow rules.
+    Supports 3 distinct policies: 'static', 'reactive', and 'predictive'.
     """
-    def __init__(self, topology_json='network/topologies/topology.json', min_risk_improvement=0.2, cooldown=10):
+    def __init__(self, topology_json='network/topologies/topology.json', min_risk_improvement=0.2, cooldown=10, policy="predictive"):
         self.graph = nx.DiGraph()
         self.load_topology(topology_json)
         self.last_reroute_time = {} # Track cooldowns per flow
         self.min_risk_improvement = min_risk_improvement
         self.cooldown = cooldown
+        self.policy = policy.lower() if policy in ["static", "reactive", "predictive"] else "predictive"
+        logging.info(f"Initialized Router with effective policy: {self.policy}")
+
+    def set_policy(self, policy: str):
+        if policy in ["static", "reactive", "predictive"]:
+            self.policy = policy
+            logging.info(f"Router policy updated to: {self.policy}")
+        else:
+            raise ValueError(f"Invalid routing policy '{policy}'. Must be 'static', 'reactive', or 'predictive'.")
 
     def load_topology(self, topology_json):
         if not os.path.exists(topology_json):
@@ -99,10 +109,36 @@ class PredictiveRouter:
                 max_risk = max(max_risk, self.graph[u][v].get('risk', 0.0))
         return max_risk
 
-    def evaluate_and_reroute(self, flow_id, source, target, current_path, nw_src, nw_dst, priority=100) -> RoutingResult:
+    def evaluate_and_reroute(self, flow_id, source, target, current_path, nw_src, nw_dst, priority=100, is_violation_actual=False, is_violation_predicted=True) -> RoutingResult:
         """
-        Safety Checks & Physical Installation Pipeline.
+        Safety Checks & Physical Installation Pipeline with explicit policy branching:
+        - Static: never performs reroutes.
+        - Reactive: reroutes only when is_violation_actual is True.
+        - Predictive: reroutes when is_violation_predicted is True.
         """
+        # Policy gate
+        if self.policy == "static":
+            return RoutingResult(
+                success=False,
+                message="Static policy bypasses dynamic rerouting",
+                failure_stage="POLICY_STATIC_BYPASS",
+                error_type="static_policy"
+            )
+        elif self.policy == "reactive" and not is_violation_actual:
+            return RoutingResult(
+                success=False,
+                message="Reactive policy waits for measured physical SLA violation",
+                failure_stage="POLICY_REACTIVE_WAIT",
+                error_type="awaiting_actual_violation"
+            )
+        elif self.policy == "predictive" and not is_violation_predicted and not is_violation_actual:
+            return RoutingResult(
+                success=False,
+                message="Predictive policy requires forecast or actual violation signal",
+                failure_stage="POLICY_PREDICTIVE_WAIT",
+                error_type="awaiting_predicted_violation"
+            )
+
         now = time.time()
         if flow_id in self.last_reroute_time and (now - self.last_reroute_time[flow_id] < self.cooldown):
             logging.info(f"Flow {flow_id} in cooldown. Skipping reroute.")

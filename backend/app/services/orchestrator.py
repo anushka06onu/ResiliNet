@@ -41,7 +41,9 @@ class Orchestrator:
         self.db_manager.initialize_db()
 
     def set_policy(self, policy: str):
-        self.policy = policy
+        valid = policy.lower() if policy.lower() in ["static", "reactive", "predictive"] else "predictive"
+        self.policy = valid
+        self.router.set_policy(valid)
         logging.info(f"Orchestrator policy set to: {self.policy}")
 
     def begin_experiment(self, experiment_id: str, policy: str):
@@ -144,12 +146,12 @@ class Orchestrator:
                         evaluate = True
 
                     if evaluate:
-                        self._evaluate_affected_flows(switch, target_switch)
+                        self._evaluate_affected_flows(switch, target_switch, is_violation_actual, bool(is_violation))
 
             except Exception as e:
                 logging.error(f"Orchestrator failed to process telemetry for {link_id}: {e}")
 
-    def _evaluate_affected_flows(self, congested_u, congested_v):
+    def _evaluate_affected_flows(self, congested_u, congested_v, is_violation_actual=False, is_violation_predicted=False):
         """Find flows crossing the congested directed edge and attempt to reroute them."""
         for flow_id, flow in self.flows.items():
             # Attempt to acquire lock without blocking so we don't hold up other evaluations
@@ -199,7 +201,9 @@ class Orchestrator:
                             target=switch_path[-1] if switch_path else path[-1],
                             current_path=switch_path,
                             nw_src=nw_src,
-                            nw_dst=nw_dst
+                            nw_dst=nw_dst,
+                            is_violation_actual=is_violation_actual,
+                            is_violation_predicted=is_violation_predicted
                         )
                         success = result.success
                         msg = result.message

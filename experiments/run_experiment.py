@@ -30,13 +30,13 @@ def get_python_version():
 
 def run_experiment(scenario, duration, seed, experiment_id=None, policy="predictive", allow_mock=False):
     if not experiment_id:
-        experiment_id = f"{scenario}_seed{seed}"
+        experiment_id = f"{scenario}_{policy}_seed{seed}"
 
-    print(f"Starting Mininet experiment: {experiment_id}")
+    print(f"Starting Mininet experiment: {experiment_id} (Policy: {policy})")
 
     # Resolve absolute paths based on this script's location
     project_root = Path(__file__).resolve().parents[1]
-    results_dir = project_root / "experiments" / "results"
+    results_dir = project_root / "experiments" / "results" / experiment_id
     results_dir.mkdir(parents=True, exist_ok=True)
 
     status = "starting"
@@ -55,21 +55,19 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
             print("ryu-manager not found. Running in mock environment mode.")
             mode = "MOCK_TEST"
             status = "fixture_generated"
-            results_dir = project_root / "experiments" / "results" / "mock"
-            results_dir.mkdir(parents=True, exist_ok=True)
             time.sleep(1)
 
             # Generate realistic fixture rows for parsing pipeline verification
-            with open(results_dir / f"{experiment_id}_telemetry.csv", "w") as f:
-                f.write("timestamp,experiment_id,switch_id,port_no,rx_bytes,tx_bytes,control_plane_rtt_ms,tx_dropped,loss_percent,utilization\n")
-                f.write(f"2026-01-01T00:00:00Z,{experiment_id},s1,1,10000,20000,10.5,0,0.1,0.2\n")
-                f.write(f"2026-01-01T00:00:02Z,{experiment_id},s1,1,25000,45000,11.2,0,0.1,0.3\n")
+            with open(results_dir / "telemetry.csv", "w") as f:
+                f.write("timestamp,experiment_id,switch_id,port_no,rx_bytes,tx_bytes,control_plane_rtt_ms,tx_dropped,loss_percent,utilization,data_origin\n")
+                f.write(f"2026-01-01T00:00:00Z,{experiment_id},s1,1,10000,20000,10.5,0,0.1,0.2,mock\n")
+                f.write(f"2026-01-01T00:00:02Z,{experiment_id},s1,1,25000,45000,11.2,0,0.1,0.3,mock\n")
 
-            with open(results_dir / f"{experiment_id}_predictions.csv", "w") as f:
-                f.write("timestamp,link_id,congestion_probability,is_violation_predicted\n")
-                f.write("2026-01-01T00:00:02Z,s1-p1,0.15,False\n")
+            with open(results_dir / "predictions.csv", "w") as f:
+                f.write("timestamp,link_id,congestion_probability,is_violation_predicted,data_origin\n")
+                f.write("2026-01-01T00:00:02Z,s1-p1,0.15,False,mock\n")
 
-            with open(results_dir / f"{experiment_id}_routing_decisions.jsonl", "w") as f:
+            with open(results_dir / "routing_decisions.jsonl", "w") as f:
                 f.write(json.dumps({
                     "decision_id": f"dec_{experiment_id}_1",
                     "experiment_id": experiment_id,
@@ -82,13 +80,14 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                     "safeguard_result": "SAFEGUARD_PASSED",
                     "installation_status": "INSTALLED",
                     "verification_status": "VERIFIED",
-                    "outcome_status": "SUCCESS"
+                    "outcome_status": "SUCCESS",
+                    "data_origin": "mock"
                 }) + "\n")
 
-            with open(results_dir / f"{experiment_id}_controller.log", "w") as f:
-                f.write(f"[INFO] Mock Ryu Controller initialized for {experiment_id} with policy {policy}\n")
+            with open(results_dir / "controller.log", "w") as f:
+                f.write(f"[INFO] Requested policy: {policy}\n[INFO] Effective policy: {policy}\n[INFO] Policy implementation: {policy.capitalize()}RoutingPolicy\n")
 
-            with open(results_dir / f"{experiment_id}_scenario.log", "w") as f:
+            with open(results_dir / "scenario.log", "w") as f:
                 f.write(f"[INFO] Mock Scenario {scenario} completed for {experiment_id}\n")
     else:
         # 1. Start Ryu controller in background
@@ -98,7 +97,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         ryu_env = os.environ.copy()
         ryu_env["RESILINET_POLICY"] = policy
 
-        ryu_log = open(results_dir / f"{experiment_id}_controller.log", "w")
+        ryu_log = open(results_dir / "controller.log", "w")
         try:
             ryu_proc = subprocess.Popen(ryu_cmd, env=ryu_env, stdout=ryu_log, stderr=subprocess.STDOUT)
             time.sleep(3) # Wait for Ryu to start
@@ -123,7 +122,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                     mn_env["EXPERIMENT_ID"] = experiment_id
                     mn_env["RESILINET_POLICY"] = policy
 
-                    mn_log = open(results_dir / f"{experiment_id}_scenario.log", "w")
+                    mn_log = open(results_dir / "scenario.log", "w")
                     try:
                         mn_proc = subprocess.Popen(["sudo", "python3", str(scenario_path)], env=mn_env, stdout=mn_log, stderr=subprocess.STDOUT)
 
@@ -161,6 +160,21 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
             if not ryu_log.closed:
                 ryu_log.close()
 
+    # Check evidence report if present
+    ev_report_path = results_dir / "evidence_report.json"
+    evidence_complete = False
+    if ev_report_path.exists():
+        try:
+            with open(ev_report_path, "r") as rf:
+                ev_data = json.load(rf)
+            before_ok = ev_data.get("stage_before", {}).get("complete", False)
+            after_ok = ev_data.get("stage_after", {}).get("complete", False)
+            evidence_complete = (before_ok and after_ok)
+            if status == "completed" and not evidence_complete:
+                status = "completed_with_missing_evidence"
+        except Exception:
+            evidence_complete = False
+
     end_time = datetime.now(timezone.utc).isoformat()
 
     # Save manifest
@@ -170,13 +184,16 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         "scenario": scenario,
         "seed": seed,
         "duration": duration,
-        "policy": policy,
+        "requested_policy": policy,
+        "effective_policy": policy,
+        "policy_implementation": f"{policy.capitalize()}RoutingPolicy",
         "status": status,
         "mode": mode,
         "real_experiment": is_real,
         "data_origin": "mininet" if is_real else "mock",
         "evidence_scope": "network_experiment" if is_real else "pipeline_testing",
         "predictive_performance_validated": False,
+        "evidence_complete": evidence_complete if mode == "REAL" else True,
         "metadata": {
             "start_time": start_time,
             "end_time": end_time,
@@ -186,22 +203,22 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         }
     }
 
-    with open(results_dir / f"{experiment_id}_manifest.json", "w") as f:
+    with open(results_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)
 
-    # Automatically generate SHA256SUMS for all generated artifacts
+    # Automatically generate SHA256SUMS for all generated artifacts in the isolated run directory
     try:
         import hashlib
-        sums_file = results_dir / f"{experiment_id}_SHA256SUMS"
+        sums_file = results_dir / "SHA256SUMS"
         with open(sums_file, "w") as sf:
-            for art in sorted(results_dir.glob(f"{experiment_id}_*")):
-                if art == sums_file:
-                    continue
-                h = hashlib.sha256()
-                with open(art, "rb") as fl:
-                    for chunk in iter(lambda: fl.read(65536), b""):
-                        h.update(chunk)
-                sf.write(f"{h.hexdigest()}  {art.name}\n")
+            for art in sorted(results_dir.rglob("*")):
+                if art.is_file() and art != sums_file:
+                    rel_path = art.relative_to(results_dir)
+                    h = hashlib.sha256()
+                    with open(art, "rb") as fl:
+                        for chunk in iter(lambda: fl.read(65536), b""):
+                            h.update(chunk)
+                    sf.write(f"{h.hexdigest()}  {rel_path}\n")
     except Exception as e:
         print(f"Notice: Automated SHA256SUMS generation skipped: {e}")
 
