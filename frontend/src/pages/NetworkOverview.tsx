@@ -33,7 +33,10 @@ const NetworkOverview = () => {
         <h2 className="text-2xl font-bold text-white mb-2">Network Overview</h2>
         <div className="flex gap-4 text-sm items-center">
           <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">
-            Topology: <strong className="text-white">sndlib_campus_demo</strong>
+            Topology:{' '}
+            <strong className="text-white">
+              {currentTopology?.topology_id || currentTopology?.mode || 'sndlib_campus'}
+            </strong>
           </span>
           <span className="px-2 py-1 bg-slate-800 rounded text-slate-300">
             Experiment:{' '}
@@ -49,8 +52,8 @@ const NetworkOverview = () => {
             </span>
           )}
 
-          <div className="bg-amber-900/30 text-amber-400 border border-amber-500/50 px-3 py-1 rounded-md text-xs font-bold tracking-wider uppercase ml-auto">
-            ILLUSTRATIVE DEMO SCENARIO
+          <div className="bg-slate-800 border border-slate-700 text-slate-300 px-3 py-1 rounded-md text-xs font-bold tracking-wider uppercase ml-auto">
+            MODE: {useStore.getState().dataMode}
           </div>
         </div>
       </header>
