@@ -3,7 +3,7 @@ import os
 import sys
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Ensure network is accessible
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -239,36 +239,24 @@ class Orchestrator:
 
                         risk_after = self.router.calculate_path_risk(proposed_path) if success and proposed_path else None
 
-                        # Determine failure stage and rollback result
-                        failure_stage = None
-                        error_type = None
+                        failure_stage = result.failure_stage
+                        error_type = result.error_type
                         rollback_result = None
-
-                        if not success:
-                            if "verification" in msg.lower():
-                                failure_stage = "verification"
-                                rollback_result = "success" if "rollback" not in msg.lower() or "successful" in msg.lower() else "failed"
-                                error_type = "verification_failed"
-                            elif "install" in msg.lower() or "connection" in msg.lower():
-                                failure_stage = "installation"
-                                rollback_result = "pending"
-                                error_type = "installation_error"
-                            else:
-                                failure_stage = "evaluation"
-                                error_type = "no_viable_path"
+                        if result.rollback_attempted:
+                            rollback_result = "success" if result.rollback_success else "failed"
 
                         # Record decision
                         decision = {
                             "decision_id": str(uuid.uuid4()),
                             "experiment_id": self.active_experiment_id or "unknown",
                             "flow_id": flow_id,
-                            "timestamp": datetime.utcnow().isoformat() + "Z",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
                             "risk_before": risk_before,
                             "risk_after": risk_after,
                             "original_path": path,
                             "proposed_path": proposed_path if success else (proposed_path if proposed_path else None),
                             "safeguard_result": msg,
-                            "installation_status": "success" if success or failure_stage == "verification" else "failed",
+                            "installation_status": "success" if (success or failure_stage == "verification") else "failed",
                             "verification_status": "success" if success else ("failed" if failure_stage == "verification" else "skipped"),
                             "outcome_status": "success" if success else "failed",
                             "failure_stage": failure_stage,
@@ -278,19 +266,22 @@ class Orchestrator:
 
                         if success:
                             flow["sla_status"] = "Rerouted"
-                            # Re-attach hosts for tracking if they were there
                             new_full_path = proposed_path.copy()
                             if path[0].startswith("h"): new_full_path.insert(0, path[0])
                             if path[-1].startswith("h"): new_full_path.append(path[-1])
                             flow["current_path"] = new_full_path
                             flow["state"] = "STABLE"
                         else:
-                            if "verification" in msg.lower() or "rollback" in msg.lower():
-                                flow["state"] = "ROLLBACK_COMPLETE" # or ROLLBACK_FAILED if we had that info
+                            if result.rollback_attempted:
+                                if result.rollback_success:
+                                    flow["state"] = "ROLLBACK_COMPLETE"
+                                    # Recovery transition to stable on original path
+                                    flow["state"] = "STABLE"
+                                else:
+                                    flow["state"] = "DEGRADED"
                             else:
                                 flow["state"] = "DEGRADED"
                             flow["sla_status"] = "Violated"
-
 
                         self.routing_decisions.append(decision)
 

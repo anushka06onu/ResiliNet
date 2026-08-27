@@ -1,15 +1,17 @@
 import asyncio
 import json
+import logging
 import os
 import sys
-from datetime import datetime
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Optional, Literal
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from app.config import sla_config
-from typing import Literal
 
 project_root = Path(__file__).resolve().parents[2]
 
@@ -19,8 +21,6 @@ try:
 except ImportError:
     sys.path.append(os.path.dirname(__file__))
     from api.predict import router as predict_router
-
-from typing import List, Optional
 
 class TopologyNode(BaseModel):
     id: str
@@ -38,10 +38,35 @@ class TopologySchema(BaseModel):
     links: List[TopologyLink]
     mode: Optional[str] = None
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    from app.services.orchestrator import orchestrator
+    orchestrator.initialize_db()
+    yield
+    # Shutdown
+    for ws in list(manager.active_connections):
+        try:
+            await ws.close()
+        except Exception:
+            pass
+    manager.active_connections.clear()
+    for exp_id in list(experiment_manager.active_processes.keys()):
+        try:
+            experiment_manager.stop(exp_id)
+        except Exception:
+            pass
+    try:
+        if hasattr(orchestrator, 'conn') and orchestrator.conn:
+            orchestrator.conn.close()
+    except Exception:
+        pass
+
 app = FastAPI(
     title="ResiliNet API",
     description="Network Digital Twin Backend for Predictive QoS and Routing",
-    version="1.1.0"
+    version="1.1.0",
+    lifespan=lifespan
 )
 
 # CORS config
@@ -74,11 +99,15 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
+        failed = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"WebSocket broadcast error: {e}")
+                failed.append(connection)
+        for connection in failed:
+            self.disconnect(connection)
 
 manager = ConnectionManager()
 
@@ -87,7 +116,6 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # The client might send control messages
             data = await websocket.receive_text()
             print(f"WS Client says: {data}")
     except WebSocketDisconnect:
@@ -125,12 +153,10 @@ feature_pipeline = FeaturePipeline()
 @app.post("/api/v1/telemetry/ingest")
 async def ingest_telemetry(payload: TelemetryPayload):
     global last_telemetry_timestamp
-    last_telemetry_timestamp = datetime.utcnow()
+    last_telemetry_timestamp = datetime.now(timezone.utc)
 
     link_id = f"{payload.switch_id}-p{payload.port_no}"
 
-    # payload.features currently has rx_bytes, tx_bytes, control_plane_rtt_ms, loss_percent, etc.
-    # We pass it to the FeaturePipeline
     computed_features = feature_pipeline.process_raw_telemetry(
         link_id=link_id,
         raw_metrics=payload.features.model_dump(),
@@ -138,19 +164,17 @@ async def ingest_telemetry(payload: TelemetryPayload):
     )
 
     if computed_features.get("status") == "INSUFFICIENT_DATA":
-        latest_features[link_id] = payload.features.model_dump() # Store raw until warm
+        latest_features[link_id] = payload.features.model_dump()
         return {"status": "warming_up", "message": "Gathering more telemetry"}
 
     if computed_features.get("status") == "STALE_DATA":
         return {"status": "dropped", "message": "Stale metric"}
 
-    # Store globally so frontend can poll it
     latest_features[link_id] = computed_features
-
 
     # Append to telemetry history
     tel_record = computed_features.copy()
-    tel_record['timestamp'] = last_telemetry_timestamp.isoformat() + "Z"
+    tel_record['timestamp'] = last_telemetry_timestamp.isoformat()
     tel_record['link_id'] = link_id
     telemetry_history.append(tel_record)
 
@@ -165,7 +189,7 @@ async def ingest_telemetry(payload: TelemetryPayload):
         "mode": "LIVE LAB",
         "source": "mininet_ryu",
         "type": "link_telemetry",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "experiment_id": orchestrator.active_experiment_id or "unknown",
         "payload": {
             "link_id": link_id,
@@ -178,18 +202,16 @@ async def ingest_telemetry(payload: TelemetryPayload):
         }
     }
 
-
     # Attempt prediction
     try:
         from app.api.predict import DECISION_THRESHOLD, MODEL_LOADED, model
         if MODEL_LOADED:
             import sys
             from pathlib import Path
-
             import pandas as pd
-            project_root = str(Path(__file__).resolve().parents[2])
-            if project_root not in sys.path:
-                sys.path.append(project_root)
+            project_root_str = str(Path(__file__).resolve().parents[2])
+            if project_root_str not in sys.path:
+                sys.path.append(project_root_str)
             from ml.schema import MODEL_FEATURES
 
             df = pd.DataFrame(
@@ -203,32 +225,25 @@ async def ingest_telemetry(payload: TelemetryPayload):
                 event["payload"]["is_violation_predicted"] = bool(prob > DECISION_THRESHOLD)
                 event["payload"]["prediction_status"] = "success"
 
-                # Append to prediction history
                 pred_record = computed_features.copy()
                 pred_record['timestamp'] = event["timestamp"]
                 pred_record['link_id'] = link_id
                 pred_record['predicted_risk'] = float(prob)
                 prediction_history.append(pred_record)
             except Exception as e:
-                print(f"Prediction failed: {e}")
+                logging.error(f"Prediction failed: {e}")
                 event["payload"]["prediction_status"] = "inference_failed"
         else:
             event["payload"]["prediction_status"] = "model_unavailable"
     except Exception as e:
         event["payload"]["prediction_status"] = "inference_failed"
-        print(f"Prediction exception: {e}")
+        logging.error(f"Prediction exception: {e}")
 
     # Pass the event to the Orchestrator to evaluate flows and routing
-    # Offload to a background thread to prevent blocking the async event loop with subprocess and sleep calls
     asyncio.create_task(asyncio.to_thread(orchestrator.handle_telemetry_event, event))
 
     await manager.broadcast(event)
     return {"status": "ingested"}
-
-@app.on_event("startup")
-async def startup_event():
-    # Stop starting the demo telemetry now that we have a live ingest endpoint
-    orchestrator.initialize_db()
 
 # ---------------------------------------------------------
 # System & Topology Endpoints
@@ -236,7 +251,6 @@ async def startup_event():
 active_live_topology = None
 
 from app.services.orchestrator import orchestrator
-
 
 @app.post("/api/v1/topology/ingest")
 async def ingest_topology(payload: TopologySchema):
@@ -247,11 +261,14 @@ async def ingest_topology(payload: TopologySchema):
 
 @app.get("/api/v1/system/status")
 def system_status():
-    mode = "DEMO DATA"
-    if last_telemetry_timestamp:
-        dt = (datetime.utcnow() - last_telemetry_timestamp).total_seconds()
+    if not last_telemetry_timestamp:
+        mode = "NO_DATA"
+    else:
+        dt = (datetime.now(timezone.utc) - last_telemetry_timestamp).total_seconds()
         if dt <= 10.0:
-            mode = "LIVE LAB"
+            mode = "LIVE"
+        else:
+            mode = "STALE"
 
     return {"status": mode, "version": "1.1.0", "active_connections": len(manager.active_connections)}
 
@@ -400,15 +417,73 @@ def get_flow_details(flow_id: str):
 # Routing Decisions Endpoints
 # ---------------------------------------------------------
 @app.get("/api/v1/routing/decisions")
-def list_routing_decisions():
-    return orchestrator.routing_decisions
+def list_routing_decisions(
+    experiment_id: Optional[str] = None,
+    flow_id: Optional[str] = None,
+    outcome: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    try:
+        with orchestrator.db_lock:
+            cursor = orchestrator.conn.cursor()
+            query = """
+                SELECT decision_id, experiment_id, flow_id, timestamp, risk_before, risk_after,
+                       original_path, proposed_path, safeguard_result, installation_status,
+                       verification_status, outcome_status, failure_stage, error_type, rollback_result
+                FROM routing_decisions
+                WHERE 1=1
+            """
+            params = []
+            if experiment_id:
+                query += " AND experiment_id = ?"
+                params.append(experiment_id)
+            if flow_id:
+                query += " AND flow_id = ?"
+                params.append(flow_id)
+            if outcome:
+                query += " AND outcome_status = ?"
+                params.append(outcome)
+            query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
 
-# ---------------------------------------------------------
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            decisions = []
+            for r in rows:
+                decisions.append({
+                    "decision_id": r[0],
+                    "experiment_id": r[1],
+                    "flow_id": r[2],
+                    "timestamp": r[3],
+                    "risk_before": r[4],
+                    "risk_after": r[5],
+                    "original_path": json.loads(r[6]) if r[6] else None,
+                    "proposed_path": json.loads(r[7]) if r[7] else None,
+                    "safeguard_result": r[8],
+                    "installation_status": r[9],
+                    "verification_status": r[10],
+                    "outcome_status": r[11],
+                    "failure_stage": r[12],
+                    "error_type": r[13],
+                    "rollback_result": r[14]
+                })
+            return decisions
+    except Exception as e:
+        logging.error(f"Error reading routing decisions from DB: {e}")
+        res = orchestrator.routing_decisions
+        if experiment_id:
+            res = [d for d in res if d.get("experiment_id") == experiment_id]
+        if flow_id:
+            res = [d for d in res if d.get("flow_id") == flow_id]
+        if outcome:
+            res = [d for d in res if d.get("outcome_status") == outcome]
+        return res[offset:offset+limit]
+
 # ---------------------------------------------------------
 # Experiment Control & Replay
 # ---------------------------------------------------------
 import subprocess
-
 
 class ExperimentManager:
     def __init__(self):
@@ -427,20 +502,22 @@ class ExperimentManager:
         return True
 
     def stop(self, id: str):
-        if id not in self.active_processes:
+        if id not in self.active_processes and id not in self.historical_records:
             return False
 
-        proc = self.active_processes[id]
-        if proc.poll() is None:
-            import signal
-            proc.send_signal(signal.SIGINT)
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        if id in self.active_processes:
+            proc = self.active_processes[id]
+            if proc.poll() is None:
+                import signal
+                proc.send_signal(signal.SIGINT)
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            del self.active_processes[id]
 
-        self.historical_records[id]["status"] = "STOPPED"
-        del self.active_processes[id]
+        if id in self.historical_records:
+            self.historical_records[id]["status"] = "STOPPED"
         return True
 
     def status(self, id: str):
@@ -450,12 +527,30 @@ class ExperimentManager:
                 return "running"
             else:
                 code = proc.returncode
-                self.historical_records[id]["status"] = "completed" if code == 0 else f"failed (code {code})"
+                manifest_path = Path(project_root) / "experiments" / "results" / f"{id}_manifest.json"
+                if manifest_path.exists():
+                    try:
+                        with open(manifest_path, "r") as f:
+                            man = json.load(f)
+                            self.historical_records[id]["status"] = man.get("status", "completed" if code == 0 else f"failed (code {code})")
+                    except Exception:
+                        self.historical_records[id]["status"] = "completed" if code == 0 else f"failed (code {code})"
+                else:
+                    self.historical_records[id]["status"] = "completed" if code == 0 else f"failed (code {code})"
                 del self.active_processes[id]
                 return self.historical_records[id]["status"]
 
         if id in self.historical_records:
             return self.historical_records[id]["status"]
+
+        manifest_path = Path(project_root) / "experiments" / "results" / f"{id}_manifest.json"
+        if manifest_path.exists():
+            try:
+                with open(manifest_path, "r") as f:
+                    man = json.load(f)
+                    return man.get("status", "completed")
+            except Exception:
+                pass
 
         return "unknown"
 
@@ -463,34 +558,36 @@ experiment_manager = ExperimentManager()
 
 @app.get("/api/v1/experiments")
 def list_experiments():
-    import json
-    results = []
-
-    # Add currently active
-    for exp_id, proc in experiment_manager.active_processes.items():
-        if proc.poll() is None:
-            results.append({
-                "id": exp_id,
-                "status": "running"
-            })
+    results = {}
 
     # Add finished from results directory
     results_dir = Path(project_root) / "experiments" / "results"
-    for manifest_path in results_dir.glob("*_manifest.json"):
-        try:
-            with manifest_path.open("r", encoding="utf-8") as file:
-                manifest = json.load(file)
+    if results_dir.exists():
+        for manifest_path in results_dir.glob("*_manifest.json"):
+            try:
+                with manifest_path.open("r", encoding="utf-8") as file:
+                    manifest = json.load(file)
 
-            results.append({
-                "id": manifest.get("experiment_id"),
-                "status": manifest.get("status", "unknown"),
-                "scenario": manifest.get("scenario"),
-                "seed": manifest.get("seed"),
-            })
-        except Exception:
-            pass
+                exp_id = manifest.get("experiment_id")
+                if exp_id:
+                    results[exp_id] = {
+                        "id": exp_id,
+                        "status": manifest.get("status", "unknown"),
+                        "scenario": manifest.get("scenario"),
+                        "seed": manifest.get("seed"),
+                    }
+            except Exception as e:
+                logging.warning(f"Failed to read manifest {manifest_path}: {e}")
 
-    return results
+    # Add currently active (overriding/taking priority)
+    for exp_id, proc in experiment_manager.active_processes.items():
+        if proc.poll() is None:
+            results[exp_id] = {
+                "id": exp_id,
+                "status": "running"
+            }
+
+    return list(results.values())
 
 @app.get("/api/v1/experiments/{id}")
 def get_experiment(id: str):
@@ -523,7 +620,6 @@ def start_experiment(id: str, config: ExperimentConfig = None):
     orchestrator.routing_decisions = []
     feature_pipeline.link_history.clear()
 
-
     if config is None:
         config = ExperimentConfig()
 
@@ -536,17 +632,18 @@ def start_experiment(id: str, config: ExperimentConfig = None):
 
 @app.post("/api/v1/experiments/{id}/pause")
 def pause_experiment(id: str):
-    # Respond with HTTP 501 Not Implemented instead of misleading status
-    from fastapi import HTTPException
     raise HTTPException(status_code=501, detail="Pause not supported directly in Mininet yet")
 
 @app.post("/api/v1/experiments/{id}/stop")
 def stop_experiment(id: str):
+    if id not in experiment_manager.active_processes and id not in experiment_manager.historical_records:
+        manifest_path = Path(project_root) / "experiments" / "results" / f"{id}_manifest.json"
+        if not manifest_path.exists():
+            raise HTTPException(status_code=404, detail="Experiment not found")
+
     experiment_manager.stop(id)
 
     # Dump artifacts
-    import os
-
     import pandas as pd
     results_dir = Path(project_root) / 'experiments' / 'results'
     os.makedirs(results_dir, exist_ok=True)
@@ -556,7 +653,6 @@ def stop_experiment(id: str):
     if prediction_history:
         pd.DataFrame(prediction_history).to_csv(results_dir / f"{id}_predictions.csv", index=False)
     if orchestrator.routing_decisions:
-        import json
         with open(results_dir / f"{id}_routing_decisions.jsonl", "w") as f:
             f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
 

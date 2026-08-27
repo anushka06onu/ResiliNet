@@ -14,6 +14,11 @@ class RoutingResult(BaseModel):
     success: bool
     message: str
     proposed_path: Optional[list] = None
+    failure_stage: Optional[str] = None
+    error_type: Optional[str] = None
+    rollback_attempted: bool = False
+    rollback_success: Optional[bool] = None
+    rollback_error: Optional[str] = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -101,33 +106,71 @@ class PredictiveRouter:
         now = time.time()
         if flow_id in self.last_reroute_time and (now - self.last_reroute_time[flow_id] < self.cooldown):
             logging.info(f"Flow {flow_id} in cooldown. Skipping reroute.")
-            return RoutingResult(success=False, message="Cooldown Active")
+            return RoutingResult(
+                success=False,
+                message="Cooldown Active",
+                failure_stage="evaluation",
+                error_type="cooldown_active"
+            )
 
         proposed_path = self.calculate_path(source, target)
         if not proposed_path or proposed_path == current_path:
-            return RoutingResult(success=False, message="Proposed path identical or unreachable")
+            return RoutingResult(
+                success=False,
+                message="Proposed path identical or unreachable",
+                failure_stage="evaluation",
+                error_type="no_viable_path"
+            )
 
         current_risk = self.calculate_path_risk(current_path)
         proposed_risk = self.calculate_path_risk(proposed_path)
 
         if current_risk - proposed_risk < self.min_risk_improvement:
-            return RoutingResult(success=False, message=f"Risk improvement ({current_risk - proposed_risk:.2f}) below threshold")
+            return RoutingResult(
+                success=False,
+                message=f"Risk improvement ({current_risk - proposed_risk:.2f}) below threshold",
+                failure_stage="evaluation",
+                error_type="below_threshold"
+            )
 
         proposed_reverse_path = self.calculate_path(target, source)
         if not proposed_reverse_path:
-            return RoutingResult(success=False, message="Reverse path unreachable")
+            return RoutingResult(
+                success=False,
+                message="Reverse path unreachable",
+                failure_stage="evaluation",
+                error_type="no_viable_path"
+            )
 
         # 5. Route installation via OpenFlow and verification
         logging.info(f"Initiating bidirectional route installation for {flow_id}")
-        success = self.install_bidirectional_route(proposed_path, proposed_reverse_path, nw_src, nw_dst, flow_id, priority)
+        res = self.install_bidirectional_route(proposed_path, proposed_reverse_path, nw_src, nw_dst, flow_id, priority)
         
-        if success:
+        if res["success"]:
             self.last_reroute_time[flow_id] = now
             logging.info(f"Successfully rerouted {flow_id}: {current_path} -> {proposed_path}")
-            return RoutingResult(success=True, message="Reroute installed successfully", proposed_path=proposed_path)
+            return RoutingResult(
+                success=True,
+                message="Reroute installed successfully",
+                proposed_path=proposed_path,
+                failure_stage=None,
+                error_type=None,
+                rollback_attempted=False,
+                rollback_success=None,
+                rollback_error=None
+            )
         else:
-            logging.error(f"Failed to install OpenFlow rules for {flow_id}")
-            return RoutingResult(success=False, message="OpenFlow installation failed")
+            logging.error(f"Failed to install OpenFlow rules for {flow_id}: {res.get('error_type')}")
+            return RoutingResult(
+                success=False,
+                message=res.get("message", "OpenFlow installation failed"),
+                proposed_path=proposed_path,
+                failure_stage=res.get("failure_stage"),
+                error_type=res.get("error_type"),
+                rollback_attempted=res.get("rollback_attempted", False),
+                rollback_success=res.get("rollback_success"),
+                rollback_error=res.get("rollback_error")
+            )
 
     def _install_path(self, path, nw_src, nw_dst, priority, cookie, installed_rules):
         """Helper to install a single directional path and track installed rules for rollback."""
@@ -152,41 +195,88 @@ class PredictiveRouter:
                 installed_rules.append((current_node, nw_src, nw_dst, priority, cookie, out_port))
         return True
 
-    def install_bidirectional_route(self, forward_path, reverse_path, nw_src, nw_dst, flow_id, priority=100):
+    def install_bidirectional_route(self, forward_path, reverse_path, nw_src, nw_dst, flow_id, priority=100) -> dict:
         """
         Physically injects OpenFlow rules into OVS switches along both paths.
         Implements rollback if any installation fails.
         """
         installed_rules = []
         import hashlib
-        # Generate a unique integer cookie based on the flow_id
         cookie = int(hashlib.md5(flow_id.encode()).hexdigest()[:8], 16)
         try:
             # Install forward path
             if not self._install_path(forward_path, nw_src, nw_dst, priority, cookie, installed_rules):
-                self._rollback_rules(installed_rules)
-                return False
+                rb_ok, rb_err = self._rollback_rules(installed_rules) if installed_rules else (True, None)
+                return {
+                    "success": False,
+                    "message": "Forward path installation failed",
+                    "failure_stage": "installation",
+                    "error_type": "installation_error",
+                    "rollback_attempted": bool(installed_rules),
+                    "rollback_success": rb_ok if installed_rules else None,
+                    "rollback_error": rb_err
+                }
                 
             # Install reverse path (swap nw_src and nw_dst)
             if not self._install_path(reverse_path, nw_dst, nw_src, priority, cookie, installed_rules):
-                self._rollback_rules(installed_rules)
-                return False
+                rb_ok, rb_err = self._rollback_rules(installed_rules)
+                return {
+                    "success": False,
+                    "message": "Reverse path installation failed",
+                    "failure_stage": "installation",
+                    "error_type": "installation_error",
+                    "rollback_attempted": True,
+                    "rollback_success": rb_ok,
+                    "rollback_error": rb_err
+                }
                 
             # Post-installation flow-table verification
             if not self._verify_installed_rules(installed_rules):
-                self._rollback_rules(installed_rules)
-                return False
+                rb_ok, rb_err = self._rollback_rules(installed_rules)
+                return {
+                    "success": False,
+                    "message": "Flow rule verification failed",
+                    "failure_stage": "verification",
+                    "error_type": "verification_failed",
+                    "rollback_attempted": True,
+                    "rollback_success": rb_ok,
+                    "rollback_error": rb_err
+                }
                 
             # Post-installation traffic counter verification
             if not self._verify_traffic_counters(installed_rules):
-                self._rollback_rules(installed_rules)
-                return False
+                rb_ok, rb_err = self._rollback_rules(installed_rules)
+                return {
+                    "success": False,
+                    "message": "Traffic counter verification failed",
+                    "failure_stage": "verification",
+                    "error_type": "traffic_verification_failed",
+                    "rollback_attempted": True,
+                    "rollback_success": rb_ok,
+                    "rollback_error": rb_err
+                }
 
-            return True
+            return {
+                "success": True,
+                "message": "Route installed and verified successfully",
+                "failure_stage": None,
+                "error_type": None,
+                "rollback_attempted": False,
+                "rollback_success": None,
+                "rollback_error": None
+            }
         except Exception as e:
             logging.error(f"OpenFlow rule installation error: {e}")
-            self._rollback_rules(installed_rules)
-            return False
+            rb_ok, rb_err = self._rollback_rules(installed_rules) if installed_rules else (True, None)
+            return {
+                "success": False,
+                "message": f"Installation exception: {str(e)}",
+                "failure_stage": "installation",
+                "error_type": "installation_error",
+                "rollback_attempted": bool(installed_rules),
+                "rollback_success": rb_ok if installed_rules else None,
+                "rollback_error": rb_err
+            }
 
     def _verify_installed_rules(self, installed_rules):
         """Post-installation flow-table verification."""
@@ -199,7 +289,6 @@ class PredictiveRouter:
                 return False
             output = res.stdout.decode('utf-8')
             
-            # Check for exact matches on cookie, priority, IPs, and output port
             cookie_hex = hex(cookie)
             if (f"cookie={cookie_hex}" not in output or 
                 f"priority={priority}" not in output or
@@ -213,7 +302,7 @@ class PredictiveRouter:
     def _verify_traffic_counters(self, installed_rules):
         """Verifies that traffic is actually hitting the new rules by checking packet counters."""
         logging.info("Verifying traffic movement on new paths...")
-        time.sleep(2) # Give some time for traffic to hit the rules
+        time.sleep(2)
         
         for rule in installed_rules:
             current_node, nw_src, nw_dst, priority, cookie, out_port = rule
@@ -229,16 +318,12 @@ class PredictiveRouter:
             for line in output.split('\n'):
                 if f"cookie={cookie_hex}" in line and f"priority={priority}" in line:
                     flow_found = True
-                    # Check n_packets > 0
                     try:
                         n_packets_str = [p for p in line.split(', ') if p.strip().startswith('n_packets=')]
                         if n_packets_str:
                             packets = int(n_packets_str[0].split('=')[1])
                             if packets == 0:
                                 logging.warning(f"Flow verified on {current_node} but 0 packets matched.")
-                                # In a real test we might return False here if we strictly demand >0,
-                                # but for this implementation we will accept it as installed. 
-                                # If we want strict verification: return False 
                     except Exception as e:
                         logging.error(f"Error parsing packet counts: {e}")
             if not flow_found:
@@ -249,13 +334,19 @@ class PredictiveRouter:
     def _rollback_rules(self, installed_rules):
         """Rollback successfully installed rules if a later rule fails."""
         logging.info("Rolling back partially installed OpenFlow rules...")
+        rollback_success = True
+        rollback_error = None
         for rule in installed_rules:
             current_node, nw_src, nw_dst, _, cookie, _ = rule
             cmd = [
                 "sudo", "ovs-ofctl", "del-flows", current_node,
                 f"cookie={cookie}/-1"
             ]
-            subprocess.run(cmd, capture_output=True)
+            res = subprocess.run(cmd, capture_output=True)
+            if res.returncode != 0:
+                rollback_success = False
+                rollback_error = res.stderr.decode('utf-8')
+        return rollback_success, rollback_error
 
 if __name__ == '__main__':
     router = PredictiveRouter()
