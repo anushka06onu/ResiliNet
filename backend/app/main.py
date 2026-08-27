@@ -31,6 +31,7 @@ class TopologyLink(BaseModel):
     source_port: int | None = None
     target: str
     target_port: int | None = None
+    capacity: str | None = None
 
 class TopologySchema(BaseModel):
     nodes: List[TopologyNode]
@@ -263,15 +264,26 @@ def get_current_topology():
     if active_live_topology is not None:
         return active_live_topology
 
-    topo_path = 'frontend/public/topology.json'
-    if os.path.exists(topo_path):
+    topo_path = project_root / 'frontend' / 'public' / 'topology.json'
+    if topo_path.exists():
         with open(topo_path, 'r') as f:
             return json.load(f)
     return {"nodes": [], "links": [], "mode": "DEMO DATA"}
 
 @app.get("/api/v1/links/{link_id}")
 def get_link_details(link_id: str):
-    return {"link_id": link_id, "capacity": "10Mbps", "current_throughput": "4.5Mbps"}
+    capacity = "10Mbps"
+    if active_live_topology:
+        for link in active_live_topology.get("links", []):
+            src, tgt = link.get("source"), link.get("target")
+            if f"{src}-{tgt}" == link_id or f"{tgt}-{src}" == link_id:
+                capacity = link.get("capacity", "10Mbps")
+                break
+    
+    features = latest_features.get(link_id, {})
+    # Assuming rx_bytes is bytes per second, convert to Mbps
+    throughput = features.get("rx_bytes", 0) * 8 / 1_000_000 if features else 0.0
+    return {"link_id": link_id, "capacity": capacity, "current_throughput": f"{throughput:.2f} Mbps"}
 
 @app.get("/api/v1/links/{link_id}/latest-prediction")
 def get_latest_prediction(link_id: str):
