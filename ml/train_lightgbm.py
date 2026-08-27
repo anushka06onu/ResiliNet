@@ -90,6 +90,7 @@ def generate_mock_experiments():
                     'control_plane_rtt_ms': computed_features.get('control_plane_rtt_ms', 0.0),
                     'rx_bytes_slope': computed_features.get('rx_bytes_slope', 0.0),
                     'tx_bytes_rate': computed_features.get('tx_bytes_rate', 0.0),
+                    'data_origin': 'synthetic',
                     'current_sla_violated': 1 if (computed_features.get('loss_mean_30s', 0.0) > 2.0 or computed_features.get('control_plane_rtt_ms', 0.0) > 20.0) else 0
                 })
             
@@ -99,9 +100,6 @@ def generate_mock_experiments():
     # Perform shift inside the group to avoid cross-experiment leakage
     # Drop rows without a full 15-step horizon
     def get_future_violations(group):
-        # Rolling max looking ahead 15 steps. Note that rolling works backwards,
-        # so we reverse the series, roll, and reverse back.
-        # But for the last 15 rows, they don't have a full horizon, so we set them to NaN
         future_max = group['current_sla_violated'].iloc[::-1].rolling(15, min_periods=15).max().iloc[::-1].shift(-1)
         group['sla_violated_in_horizon'] = future_max
         return group
@@ -270,6 +268,21 @@ def train_lgbm_main(generate_synthetic=False):
         json.dump(final_report, f, indent=4)
         
     model.save_model('ml/artifacts/lightgbm_model.txt')
+
+    from ml.schema import CURRENT_FEATURE_SCHEMA_VERSION
+    model_metadata = {
+        "model_version": "1.1.0",
+        "feature_schema_version": CURRENT_FEATURE_SCHEMA_VERSION,
+        "feature_names": feature_cols,
+        "training_data_hash": "sha256:synthetic_v1",
+        "training_commit": "HEAD",
+        "decision_threshold": float(best_threshold),
+        "calibration_version": "platt_v1",
+        "creation_time": datetime.utcnow().isoformat() + "Z",
+        "data_origin": "synthetic"
+    }
+    with open('ml/artifacts/model_metadata.json', 'w') as f:
+        json.dump(model_metadata, f, indent=2)
     
     print("\n=== FINAL TEST SET EVALUATION ===")
     for m_name, m_stats in final_report['models'].items():
