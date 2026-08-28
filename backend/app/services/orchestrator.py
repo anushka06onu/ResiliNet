@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from network.routing.predictive_routing import PredictiveRouter
+from network.routing.policies import normalize_policy
 
 logging.basicConfig(level=logging.INFO)
 
@@ -37,18 +38,7 @@ class Orchestrator:
         self.db_manager.initialize_db()
 
     def set_policy(self, policy: str):
-        allowed = {
-            "static": "static",
-            "no_reroute": "static",
-            "reactive": "reactive",
-            "reactive_threshold": "reactive",
-            "predictive": "predictive",
-            "predictive_ml": "predictive"
-        }
-        policy_clean = policy.strip().lower()
-        if policy_clean not in allowed:
-            raise ValueError(f"Invalid policy '{policy}'. Must be one of: {sorted(list(allowed.keys()))}")
-        self.policy = allowed[policy_clean]
+        self.policy = normalize_policy(policy)
         self.router.set_policy(self.policy)
         logging.info(f"Orchestrator policy set to: {self.policy}")
 

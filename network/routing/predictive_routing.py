@@ -22,6 +22,8 @@ class RoutingResult(BaseModel):
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
+from network.routing.policies import normalize_policy, get_scientific_label
+
 class PredictiveRouter:
     """
     Calculates routing paths based on ML congestion predictions and installs physical OpenFlow rules.
@@ -38,20 +40,8 @@ class PredictiveRouter:
         logging.info(f"Initialized Router with effective policy: {self.policy}")
 
     def set_policy(self, policy: str):
-        allowed = {
-            "static": "static",
-            "no_reroute": "static",
-            "reactive": "reactive",
-            "reactive_threshold": "reactive",
-            "predictive": "predictive",
-            "predictive_ml": "predictive"
-        }
-        policy_clean = str(policy).strip().lower()
-        if policy_clean in allowed:
-            self.policy = allowed[policy_clean]
-            logging.info(f"Router policy updated to: {self.policy}")
-        else:
-            raise ValueError(f"Invalid routing policy '{policy}'. Must be one of: {sorted(list(allowed.keys()))}")
+        self.policy = normalize_policy(policy)
+        logging.info(f"Router policy updated to: {self.policy}")
 
     def load_topology(self, topology_json):
         if not os.path.exists(topology_json):

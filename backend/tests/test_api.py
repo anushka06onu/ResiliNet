@@ -107,3 +107,57 @@ def test_experiments_scenarios_endpoint():
     scenarios = res.json()
     assert "concurrent_flows" in scenarios
     assert "normal" in scenarios
+
+
+def test_internal_configure_and_finalize_endpoints(tmp_path):
+    # Test internal configure endpoint
+    res_cfg = client.post("/api/v1/internal/experiments/test_api_exp/configure", json={"policy": "reactive_threshold"})
+    assert res_cfg.status_code == 200
+    data_cfg = res_cfg.json()
+    assert data_cfg["effective_policy"] == "reactive"
+    assert data_cfg["status"] == "CONFIGURED"
+
+    # Test invalid policy rejection
+    res_invalid = client.post("/api/v1/internal/experiments/test_api_exp/configure", json={"policy": "invalid_policy_name"})
+    assert res_invalid.status_code == 422
+
+    # Test internal finalize endpoint
+    res_fin = client.post("/api/v1/internal/experiments/test_api_exp/finalize")
+    assert res_fin.status_code == 200
+    assert res_fin.json()["status"] == "FINALIZED"
+
+
+def test_isolated_experiment_manifest_discovery_and_detail(tmp_path):
+    from pathlib import Path
+    import json
+
+    project_root = Path(__file__).resolve().parents[2]
+    res_dir = project_root / "experiments" / "results" / "test_api_isolated_run"
+    res_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "experiment_id": "test_api_isolated_run",
+        "scenario": "gradual_congestion",
+        "seed": 42,
+        "status": "completed",
+        "requested_policy": "predictive_ml",
+        "effective_policy": "predictive"
+    }
+    with open(res_dir / "manifest.json", "w") as f:
+        json.dump(manifest, f)
+
+    try:
+        # Listing endpoint must discover the isolated experiment
+        res_list = client.get("/api/v1/experiments")
+        assert res_list.status_code == 200
+        items = res_list.json()["items"]
+        found = any(item.get("id") == "test_api_isolated_run" for item in items)
+        assert found, "Isolated experiment manifest not found in /api/v1/experiments"
+
+        # Detail endpoint must return status
+        res_detail = client.get("/api/v1/experiments/test_api_isolated_run")
+        assert res_detail.status_code == 200
+        assert res_detail.json()["status"] == "completed"
+    finally:
+        import shutil
+        if res_dir.exists():
+            shutil.rmtree(res_dir)

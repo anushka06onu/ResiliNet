@@ -28,6 +28,32 @@ def log_experiment_event(results_dir, event_type: str, details: dict = None):
     return event
 
 
+def apply_and_verify_netem(node, interface: str, delay_ms: float, loss_pct: float, results_dir, event_name="congestion_injected_at", stage=1):
+    """Applies traffic control impairment and verifies actual activation in the Linux kernel."""
+    cmd = f"tc qdisc change dev {interface} root netem delay {delay_ms}ms loss {loss_pct}%"
+    out = node.cmd(cmd)
+    show_out = node.cmd(f"tc qdisc show dev {interface}")
+
+    # Check if netem is present in the output
+    verified = ("netem" in show_out) and (out.strip() == "" or "error" not in out.lower())
+    details = {
+        "command": cmd,
+        "interface": interface,
+        "delay_ms": delay_ms,
+        "loss_percent": loss_pct,
+        "cmd_output": out.strip(),
+        "show_output": show_out.strip(),
+        "verified": verified,
+        "stage": stage
+    }
+    if verified:
+        log_experiment_event(results_dir, event_name, details)
+        return True
+    else:
+        log_experiment_event(results_dir, "congestion_injection_failed", details)
+        raise RuntimeError(f"tc qdisc impairment verification failed on {interface}: {out} | show: {show_out}")
+
+
 def capture_switch_state(switches, results_dir, stage="before", experiment_id=None):
     """
     Captures live OpenFlow flow tables and port statistics for active Mininet switches.
@@ -164,9 +190,14 @@ def capture_switch_state(switches, results_dir, stage="before", experiment_id=No
 
 def record_policy(policy, experiment_id, logger=None):
     """Verifies and logs the active routing policy for the experiment run."""
-    valid_policies = ["static", "reactive", "predictive"]
-    effective_policy = policy if policy in valid_policies else "predictive"
-    msg = f"Active ResiliNet Routing Policy: {effective_policy} (Requested: {policy})"
+    try:
+        from network.routing.policies import normalize_policy, get_scientific_label
+        effective_policy = normalize_policy(policy)
+        sci_label = get_scientific_label(policy)
+    except Exception:
+        effective_policy = policy
+        sci_label = policy
+    msg = f"Active ResiliNet Routing Policy: {effective_policy} [scientific: {sci_label}] (Requested: {policy})"
     if logger:
         logger.info(msg)
     else:

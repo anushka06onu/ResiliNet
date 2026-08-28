@@ -28,27 +28,66 @@ def get_python_version():
     import sys
     return sys.version
 
-def run_experiment(scenario, duration, seed, experiment_id=None, policy="predictive", allow_mock=False, results_root=None, overwrite=False):
-    if not experiment_id:
-        experiment_id = f"{scenario}_{policy}_seed{seed}"
+import shutil
+import sys
 
-    print(f"Starting Mininet experiment: {experiment_id} (Policy: {policy})")
+# Ensure network is accessible
+project_root_dir = Path(__file__).resolve().parents[1]
+if str(project_root_dir) not in sys.path:
+    sys.path.append(str(project_root_dir))
+
+from network.routing.policies import normalize_policy, get_scientific_label
+
+
+EXIT_CODES = {
+    "completed": 0,
+    "fixture_generated": 0,
+    "environment_unavailable": 2,
+    "controller_failed": 3,
+    "scenario_failed": 4,
+    "timed_out": 5,
+    "completed_with_missing_evidence": 6,
+    "policy_sync_failed": 7,
+    "cleanup_failed": 8
+}
+
+
+def run_experiment(scenario, duration, seed, experiment_id=None, policy="predictive", allow_mock=False, results_root=None, overwrite=False, require_sync=False):
+    effective_policy = normalize_policy(policy)
+    scientific_policy = get_scientific_label(policy)
+
+    if not experiment_id:
+        experiment_id = f"{scenario}_{effective_policy}_seed{seed}"
+
+    print(f"Starting Mininet experiment: {experiment_id} (Requested Policy: {policy}, Canonical: {effective_policy}, Scientific: {scientific_policy})")
 
     # Resolve absolute paths based on this script's location
     project_root = Path(__file__).resolve().parents[1]
     base_results = Path(results_root) if results_root else project_root / "experiments" / "results"
     results_dir = base_results / experiment_id
 
-    if results_dir.exists() and not overwrite and mode_check_is_active(results_dir):
-        raise FileExistsError(f"Experiment directory {results_dir} already exists. Pass --overwrite to replace.")
+    if results_dir.exists() and mode_check_is_active(results_dir):
+        if not overwrite:
+            raise FileExistsError(f"Experiment directory {results_dir} already exists. Pass --overwrite to replace.")
+        else:
+            # Clean old run directory completely so stale artifacts are never mixed or hashed
+            shutil.rmtree(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
     status = "starting"
     start_time = datetime.now(timezone.utc).isoformat()
 
-    import shutil
     has_ryu = shutil.which("ryu-manager") is not None
     mode = "REAL"
+
+    policy_sync_info = {
+        "required": require_sync,
+        "attempted": False,
+        "successful": False,
+        "requested_policy": policy,
+        "effective_policy": effective_policy,
+        "scientific_policy": scientific_policy
+    }
 
     if not has_ryu:
         if not allow_mock:
@@ -89,7 +128,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                 }) + "\n")
 
             with open(results_dir / "controller.log", "w") as f:
-                f.write(f"[INFO] Requested policy: {policy}\n[INFO] Effective policy: {policy}\n[INFO] Policy implementation: PredictiveRouter:{policy}\n")
+                f.write(f"[INFO] Requested policy: {policy}\n[INFO] Effective policy: {effective_policy}\n[INFO] Policy implementation: PredictiveRouter:{effective_policy}\n")
 
             with open(results_dir / "scenario.log", "w") as f:
                 f.write(f"[INFO] Mock Scenario {scenario} completed for {experiment_id}\n")
@@ -97,84 +136,110 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         # Try to synchronize with local Orchestrator if backend is running
         try:
             import urllib.request
-            req_data = json.dumps({"experiment_id": experiment_id, "policy": policy}).encode('utf-8')
-            req = urllib.request.Request("http://localhost:8000/api/v1/experiments/start", data=req_data, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=1) as resp:
-                res_json = json.loads(resp.read().decode())
-                print(f"Synchronized with Orchestrator: effective policy = {res_json.get('effective_policy')}")
-        except Exception:
-            pass
+            req_data = json.dumps({"policy": policy}).encode('utf-8')
+            req = urllib.request.Request(
+                f"http://localhost:8000/api/v1/internal/experiments/{experiment_id}/configure",
+                data=req_data,
+                headers={"Content-Type": "application/json"}
+            )
+            policy_sync_info["attempted"] = True
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                if resp.status == 200:
+                    res_json = json.loads(resp.read().decode())
+                    if res_json.get("effective_policy") == effective_policy:
+                        policy_sync_info["successful"] = True
+                        print(f"Synchronized with Orchestrator: effective policy = {effective_policy}")
+        except Exception as e:
+            if require_sync:
+                print(f"Error: Required policy synchronization failed: {e}")
+                status = "policy_sync_failed"
 
-        # 1. Start Ryu controller in background
-        print("Starting Ryu controller...")
-        ryu_script = project_root / "network" / "controller" / "resilinet_ryu.py"
-        ryu_cmd = ["ryu-manager", str(ryu_script)]
-        ryu_env = os.environ.copy()
-        ryu_env["RESILINET_POLICY"] = policy
+        if status != "policy_sync_failed":
+            # 1. Start Ryu controller in background
+            print("Starting Ryu controller...")
+            ryu_script = project_root / "network" / "controller" / "resilinet_ryu.py"
+            ryu_cmd = ["ryu-manager", str(ryu_script)]
+            ryu_env = os.environ.copy()
+            ryu_env["RESILINET_POLICY"] = effective_policy
 
-        ryu_log = open(results_dir / "controller.log", "w")
-        try:
-            ryu_proc = subprocess.Popen(ryu_cmd, env=ryu_env, stdout=ryu_log, stderr=subprocess.STDOUT)
-            time.sleep(3) # Wait for Ryu to start
+            ryu_log = open(results_dir / "controller.log", "w")
+            try:
+                ryu_proc = subprocess.Popen(ryu_cmd, env=ryu_env, stdout=ryu_log, stderr=subprocess.STDOUT)
+                time.sleep(3) # Wait for Ryu to start
 
-            if ryu_proc.poll() is not None:
-                print("Ryu controller failed to start.")
-                status = "controller_failed"
+                if ryu_proc.poll() is not None:
+                    print("Ryu controller failed to start.")
+                    status = "controller_failed"
 
-            mn_proc = None
-            if status == "starting":
-                # 2. Run the Mininet scenario script
-                print(f"Running Mininet script for {scenario} with policy {policy}...")
-                scenario_path = project_root / "experiments" / "scenarios" / f"{scenario}.py"
+                mn_proc = None
+                if status == "starting":
+                    # 2. Run the Mininet scenario script
+                    print(f"Running Mininet script for {scenario} with policy {effective_policy}...")
+                    scenario_path = project_root / "experiments" / "scenarios" / f"{scenario}.py"
 
-                if not scenario_path.exists():
-                    print(f"Scenario {scenario_path} not found.")
-                    status = "scenario_failed"
-                else:
-                    mn_env = os.environ.copy()
-                    mn_env["EXPERIMENT_SEED"] = str(seed)
-                    mn_env["EXPERIMENT_DURATION"] = str(duration)
-                    mn_env["EXPERIMENT_ID"] = experiment_id
-                    mn_env["RESILINET_POLICY"] = policy
-                    mn_env["RESILINET_RESULTS_DIR"] = str(results_dir)
+                    if not scenario_path.exists():
+                        print(f"Scenario {scenario_path} not found.")
+                        status = "scenario_failed"
+                    else:
+                        mn_env = os.environ.copy()
+                        mn_env["EXPERIMENT_SEED"] = str(seed)
+                        mn_env["EXPERIMENT_DURATION"] = str(duration)
+                        mn_env["EXPERIMENT_ID"] = experiment_id
+                        mn_env["RESILINET_POLICY"] = effective_policy
+                        mn_env["RESILINET_RESULTS_DIR"] = str(results_dir)
 
-                    mn_log = open(results_dir / "scenario.log", "w")
-                    try:
-                        mn_proc = subprocess.Popen(["sudo", "python3", str(scenario_path)], env=mn_env, stdout=mn_log, stderr=subprocess.STDOUT)
-
-                        # Wait for completion
+                        mn_log = open(results_dir / "scenario.log", "w")
                         try:
-                            mn_ret = mn_proc.wait(timeout=duration + 10)
-                            if mn_ret != 0:
-                                status = "scenario_failed"
-                            else:
-                                status = "completed"
-                        except subprocess.TimeoutExpired:
-                            print("Experiment timed out. Cleaning up...")
-                            mn_proc.send_signal(signal.SIGINT)
+                            mn_proc = subprocess.Popen(["sudo", "python3", str(scenario_path)], env=mn_env, stdout=mn_log, stderr=subprocess.STDOUT)
+
+                            # Wait for completion
                             try:
-                                mn_proc.wait(timeout=10)
+                                mn_ret = mn_proc.wait(timeout=duration + 10)
+                                if mn_ret != 0:
+                                    status = "scenario_failed"
+                                else:
+                                    status = "completed"
                             except subprocess.TimeoutExpired:
-                                mn_proc.kill()
-                            status = "timed_out"
-                    finally:
-                        mn_log.close()
-        finally:
-            # 3. Clean up
-            print("Cleaning up Mininet and Ryu...")
-            cleanup_proc = subprocess.run(["sudo", "mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if cleanup_proc.returncode != 0 and status == "completed":
-                status = "cleanup_failed"
+                                print("Experiment timed out. Cleaning up...")
+                                mn_proc.send_signal(signal.SIGINT)
+                                try:
+                                    mn_proc.wait(timeout=10)
+                                except subprocess.TimeoutExpired:
+                                    mn_proc.kill()
+                                status = "timed_out"
+                        finally:
+                            mn_log.close()
+            finally:
+                # 3. Clean up
+                print("Cleaning up Mininet and Ryu...")
+                cleanup_proc = subprocess.run(["sudo", "mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if cleanup_proc.returncode != 0 and status == "completed":
+                    status = "cleanup_failed"
 
-            if 'ryu_proc' in locals() and ryu_proc.poll() is None:
-                ryu_proc.terminate()
-                try:
-                    ryu_proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    ryu_proc.kill()
+                if 'ryu_proc' in locals() and ryu_proc.poll() is None:
+                    ryu_proc.terminate()
+                    try:
+                        ryu_proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        ryu_proc.kill()
 
-            if not ryu_log.closed:
-                ryu_log.close()
+                if not ryu_log.closed:
+                    ryu_log.close()
+
+    # If backend was synchronized and run succeeded, request backend record finalization into isolated directory
+    if policy_sync_info.get("successful") and status in {"completed", "fixture_generated"}:
+        try:
+            import urllib.request
+            fin_req = urllib.request.Request(
+                f"http://localhost:8000/api/v1/internal/experiments/{experiment_id}/finalize",
+                data=b"{}",
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(fin_req, timeout=2) as resp:
+                if resp.status == 200:
+                    print("Backend telemetry and decision records finalized to run directory.")
+        except Exception as e:
+            print(f"Notice: Finalization callback omitted: {e}")
 
     # Check evidence report if present
     ev_report_path = results_dir / "evidence_report.json"
@@ -194,15 +259,17 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
     end_time = datetime.now(timezone.utc).isoformat()
 
     # Save manifest
-    executed_in_mininet = (mode == "REAL" and status not in {"environment_unavailable", "controller_failed", "scenario_failed"})
+    executed_in_mininet = (mode == "REAL" and status not in {"environment_unavailable", "controller_failed", "scenario_failed", "policy_sync_failed"})
     manifest = {
         "experiment_id": experiment_id,
         "scenario": scenario,
         "seed": seed,
         "duration": duration,
         "requested_policy": policy,
-        "effective_policy": policy,
-        "policy_implementation": f"PredictiveRouter:{policy}",
+        "effective_policy": effective_policy,
+        "scientific_policy": scientific_policy,
+        "policy_implementation": f"PredictiveRouter:{effective_policy}",
+        "policy_sync": policy_sync_info,
         "status": status,
         "mode": mode,
         "real_experiment": executed_in_mininet,
@@ -239,9 +306,8 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         print(f"Notice: Automated SHA256SUMS generation skipped: {e}")
 
     print(f"Experiment {experiment_id} finished with status: {status}")
-    if status == "environment_unavailable":
-        import sys
-        sys.exit(1)
+    exit_code = EXIT_CODES.get(status, 1)
+    return exit_code
 
 
 def mode_check_is_active(d: Path) -> bool:
@@ -258,6 +324,9 @@ if __name__ == "__main__":
     parser.add_argument("--policy", type=str, default="predictive", choices=["static", "reactive", "predictive", "no_reroute", "reactive_threshold", "predictive_ml"], help="Routing policy to use")
     parser.add_argument("--allow-mock", action="store_true", help="Allow running mock experiment if Ryu/Mininet is unavailable")
     parser.add_argument("--overwrite", action="store_true", help="Allow overwriting existing experiment result directory")
+    parser.add_argument("--require-sync", action="store_true", help="Require successful backend policy synchronization before running")
 
     args = parser.parse_args()
-    run_experiment(args.scenario, args.duration, args.seed, args.experiment_id, args.policy, args.allow_mock, overwrite=args.overwrite)
+    code = run_experiment(args.scenario, args.duration, args.seed, args.experiment_id, args.policy, args.allow_mock, overwrite=args.overwrite, require_sync=args.require_sync)
+    if code != 0:
+        sys.exit(code)

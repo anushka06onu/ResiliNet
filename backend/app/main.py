@@ -10,7 +10,7 @@ from typing import List, Optional, Literal
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from app.config import sla_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -562,7 +562,9 @@ class ExperimentManager:
                 return "running"
             else:
                 code = proc.returncode
-                manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
+                manifest_path = PROJECT_ROOT / "experiments" / "results" / id / "manifest.json"
+                if not manifest_path.exists():
+                    manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
                 if manifest_path.exists():
                     try:
                         with open(manifest_path, "r") as f:
@@ -579,7 +581,9 @@ class ExperimentManager:
         if id in self.historical_records:
             return self.historical_records[id]["status"]
 
-        manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
+        manifest_path = PROJECT_ROOT / "experiments" / "results" / id / "manifest.json"
+        if not manifest_path.exists():
+            manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
         if manifest_path.exists():
             try:
                 with open(manifest_path, "r") as f:
@@ -604,21 +608,40 @@ def list_experiments(
 ):
     results = {}
 
-    # Add finished from results directory
+    # Add finished from results directory (isolated directory structure first)
     results_dir = PROJECT_ROOT / "experiments" / "results"
     if results_dir.exists():
-        for manifest_path in results_dir.glob("*_manifest.json"):
+        for manifest_path in sorted(results_dir.glob("*/manifest.json")):
             try:
                 with manifest_path.open("r", encoding="utf-8") as file:
                     manifest = json.load(file)
 
-                exp_id = manifest.get("experiment_id")
+                exp_id = manifest.get("experiment_id") or manifest_path.parent.name
                 if exp_id:
                     results[exp_id] = {
                         "id": exp_id,
                         "status": manifest.get("status", "unknown"),
                         "scenario": manifest.get("scenario"),
                         "seed": manifest.get("seed"),
+                        "policy": manifest.get("effective_policy") or manifest.get("requested_policy") or manifest.get("policy"),
+                    }
+            except Exception as e:
+                logging.warning(f"Failed to read manifest {manifest_path}: {e}")
+
+        # Also support legacy flat format
+        for manifest_path in sorted(results_dir.glob("*_manifest.json")):
+            try:
+                with manifest_path.open("r", encoding="utf-8") as file:
+                    manifest = json.load(file)
+
+                exp_id = manifest.get("experiment_id")
+                if exp_id and exp_id not in results:
+                    results[exp_id] = {
+                        "id": exp_id,
+                        "status": manifest.get("status", "unknown"),
+                        "scenario": manifest.get("scenario"),
+                        "seed": manifest.get("seed"),
+                        "policy": manifest.get("policy"),
                     }
             except Exception as e:
                 logging.warning(f"Failed to read manifest {manifest_path}: {e}")
@@ -656,13 +679,56 @@ class ExperimentConfig(BaseModel):
     scenario: Literal["normal", "gradual_congestion", "sudden_surge", "concurrent_flows"] = "normal"
     duration: int = Field(60, ge=10, le=3600)
     seed: int = 42
-    policy: Literal["static", "reactive", "predictive"] = "predictive"
+    policy: str = "predictive"
+
+    @field_validator("policy")
+    def validate_policy(cls, v):
+        from network.routing.policies import normalize_policy
+        return normalize_policy(v)
+
+
+class ExperimentConfigureRequest(BaseModel):
+    policy: str
+
+    @field_validator("policy")
+    def validate_policy(cls, v):
+        from network.routing.policies import normalize_policy
+        return normalize_policy(v)
 
 
 telemetry_history = []
 prediction_history = []
 
 import re
+
+@app.post("/api/v1/internal/experiments/{id}/configure")
+def internal_configure_experiment(id: str, req: ExperimentConfigureRequest):
+    """Internal endpoint for runner to configure orchestrator context and verify policy."""
+    if not re.match(r"^[a-zA-Z0-9_-]+$", id):
+        raise HTTPException(status_code=422, detail="Invalid experiment ID")
+    orchestrator.begin_experiment(id, req.policy)
+    return {
+        "experiment_id": id,
+        "requested_policy": req.policy,
+        "effective_policy": orchestrator.policy,
+        "status": "CONFIGURED"
+    }
+
+@app.post("/api/v1/internal/experiments/{id}/finalize")
+def internal_finalize_experiment(id: str):
+    """Internal endpoint to export in-memory records into the isolated experiment directory."""
+    run_dir = PROJECT_ROOT / "experiments" / "results" / id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    import pandas as pd
+
+    if telemetry_history:
+        pd.DataFrame(telemetry_history).to_csv(run_dir / "telemetry.csv", index=False)
+    if prediction_history:
+        pd.DataFrame(prediction_history).to_csv(run_dir / "predictions.csv", index=False)
+    if orchestrator.routing_decisions:
+        with open(run_dir / "routing_decisions.jsonl", "w") as f:
+            f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
+    return {"status": "FINALIZED", "experiment_id": id}
 
 @app.post("/api/v1/experiments/{id}/start")
 def start_experiment(id: str, config: ExperimentConfig = None):
@@ -692,23 +758,25 @@ def pause_experiment(id: str):
 @app.post("/api/v1/experiments/{id}/stop")
 def stop_experiment(id: str):
     if id not in experiment_manager.active_processes and id not in experiment_manager.historical_records:
-        manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
+        manifest_path = PROJECT_ROOT / "experiments" / "results" / id / "manifest.json"
+        if not manifest_path.exists():
+            manifest_path = PROJECT_ROOT / "experiments" / "results" / f"{id}_manifest.json"
         if not manifest_path.exists():
             raise HTTPException(status_code=404, detail="Experiment not found")
 
     experiment_manager.stop(id)
 
-    # Dump artifacts
+    # Dump artifacts to isolated directory
     import pandas as pd
-    results_dir = PROJECT_ROOT / 'experiments' / 'results'
-    os.makedirs(results_dir, exist_ok=True)
+    run_dir = PROJECT_ROOT / 'experiments' / 'results' / id
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     if telemetry_history:
-        pd.DataFrame(telemetry_history).to_csv(results_dir / f"{id}_telemetry.csv", index=False)
+        pd.DataFrame(telemetry_history).to_csv(run_dir / "telemetry.csv", index=False)
     if prediction_history:
-        pd.DataFrame(prediction_history).to_csv(results_dir / f"{id}_predictions.csv", index=False)
+        pd.DataFrame(prediction_history).to_csv(run_dir / "predictions.csv", index=False)
     if orchestrator.routing_decisions:
-        with open(results_dir / f"{id}_routing_decisions.jsonl", "w") as f:
+        with open(run_dir / "routing_decisions.jsonl", "w") as f:
             f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
 
     return {"status": "stopped", "experiment": id}

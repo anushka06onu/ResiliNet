@@ -212,7 +212,63 @@ def test_mock_experiment_execution_and_provenance(tmp_path):
     assert manifest["predictive_performance_validated"] is False
     assert manifest["requested_policy"] == "predictive"
     assert manifest["effective_policy"] == "predictive"
+    assert manifest["scientific_policy"] == "predictive_ml"
     assert manifest["policy_implementation"] == "PredictiveRouter:predictive"
+
+
+def test_mock_experiment_policy_alias_normalization(tmp_path):
+    """Verify policy aliases normalize properly in manifest records."""
+    import json
+    from experiments.run_experiment import run_experiment
+
+    exp_id = "test_alias_normalization_run"
+    run_experiment(
+        scenario="normal",
+        duration=1,
+        seed=42,
+        experiment_id=exp_id,
+        policy="no_reroute",
+        allow_mock=True,
+        results_root=tmp_path
+    )
+
+    manifest_path = tmp_path / exp_id / "manifest.json"
+    with open(manifest_path, "r") as f:
+        manifest = json.load(f)
+
+    assert manifest["requested_policy"] == "no_reroute"
+    assert manifest["effective_policy"] == "static"
+    assert manifest["scientific_policy"] == "no_reroute"
+    assert manifest["policy_implementation"] == "PredictiveRouter:static"
+
+
+def test_experiment_overwrite_cleans_stale_artifacts(tmp_path):
+    """Verify that overwriting a run directory removes stale files before hashing."""
+    import json
+    from experiments.run_experiment import run_experiment
+
+    exp_id = "test_overwrite_cleanup_run"
+    run_dir = tmp_path / exp_id
+    run_dir.mkdir(parents=True)
+    stale_file = run_dir / "stale_unrelated_artifact.txt"
+    stale_file.write_text("old data from a previous run")
+
+    # Run with overwrite=True
+    run_experiment(
+        scenario="normal",
+        duration=1,
+        seed=42,
+        experiment_id=exp_id,
+        policy="reactive_threshold",
+        allow_mock=True,
+        results_root=tmp_path,
+        overwrite=True
+    )
+
+    # Stale file must no longer exist and must not be in SHA256SUMS
+    assert not stale_file.exists()
+    sums_text = (run_dir / "SHA256SUMS").read_text()
+    assert "stale_unrelated_artifact.txt" not in sums_text
 
 
 def test_scenario_results_dir_isolation(tmp_path):

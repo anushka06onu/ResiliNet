@@ -29,7 +29,7 @@
   "artifact_hashes": {
     "model_file_sha256": "e5dabeb49cada7f1e8d936d19042d56869bb710ce7feefdabd4b3c344d3f6940",
     "model_run_id": "run_20260827_160256_1f3da3",
-    "scenario_file_sha256": "5728b7bc0b06328d8217670f0af0779fe14d8d892b3212f49a330ece6e7c2e6a",
+    "scenario_file_sha256": "be3a3bc7e4a6fe4cc647b03ec508761d1a1c4184605670676b15c026859a3d97",
     "topology_file_sha256": "1fa15aa0bc01270d5d6773ebae4a909c8dc6c09ba6422a30d430d6294bc6f96e"
   },
   "process_results_origin": "constructed_fixture",
