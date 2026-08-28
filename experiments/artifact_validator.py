@@ -63,7 +63,7 @@ def compute_campaign_invariant_fingerprint(project_root: Path) -> Dict[str, Any]
     meta_path = project_root / "ml" / "artifacts" / "model_metadata.json"
     ryu_path = project_root / "network" / "controller" / "resilinet_ryu.py"
     router_path = project_root / "network" / "routing" / "predictive_routing.py"
-    feature_path = project_root / "data_pipeline" / "feature_pipeline.py"
+    feature_path = project_root / "data_pipeline" / "feature_engineering.py"
     campaign_yaml = project_root / "experiments" / "campaign.yaml"
 
     model_run_id = "unknown"

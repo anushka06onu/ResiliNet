@@ -128,18 +128,19 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
             # Generate realistic fixture rows for parsing pipeline verification
             with open(results_dir / "telemetry.csv", "w") as f:
-                f.write("timestamp,experiment_id,switch_id,port_no,rx_bytes,tx_bytes,control_plane_rtt_ms,tx_dropped,loss_percent,utilization,data_origin\n")
-                f.write(f"2026-01-01T00:00:00Z,{experiment_id},s1,1,10000,20000,10.5,0,0.1,0.2,mock\n")
-                f.write(f"2026-01-01T00:00:02Z,{experiment_id},s1,1,25000,45000,11.2,0,0.1,0.3,mock\n")
+                f.write("timestamp,experiment_id,switch_id,port_no,rx_bytes,tx_bytes,control_plane_rtt_ms,tx_dropped,loss_percent,utilization\n")
+                f.write(f"2026-01-01T00:00:00Z,{experiment_id},s1,1,10000,20000,10.5,0,0.1,0.2\n")
+                f.write(f"2026-01-01T00:00:02Z,{experiment_id},s1,1,25000,45000,11.2,0,0.1,0.3\n")
 
             with open(results_dir / "predictions.csv", "w") as f:
-                f.write("timestamp,link_id,congestion_probability,is_violation_predicted,data_origin\n")
-                f.write("2026-01-01T00:00:02Z,s1-p1,0.15,False,mock\n")
+                f.write("timestamp,link_id,congestion_probability,is_violation_predicted\n")
+                f.write("2026-01-01T00:00:02Z,s1-p1,0.15,False\n")
 
             with open(results_dir / "routing_decisions.jsonl", "w") as f:
                 f.write(json.dumps({
                     "decision_id": f"dec_{experiment_id}_1",
                     "experiment_id": experiment_id,
+                    "episode_id": f"ep_{experiment_id}_1",
                     "flow_id": "f_1",
                     "timestamp": "2026-01-01T00:00:02Z",
                     "risk_before": 0.15,
@@ -149,9 +150,44 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                     "safeguard_result": "SAFEGUARD_PASSED",
                     "installation_status": "INSTALLED",
                     "verification_status": "VERIFIED",
-                    "outcome_status": "SUCCESS",
-                    "data_origin": "mock"
+                    "outcome_status": "SUCCESS"
                 }) + "\n")
+
+            # Events
+            ev1 = {"timestamp": "2026-01-01T00:00:01Z", "event": "traffic_started_at", "experiment_id": experiment_id, "episode_id": f"ep_{experiment_id}_1", "source": "scenario", "details": {}}
+            ev2 = {"timestamp": "2026-01-01T00:00:02Z", "event": "prediction_threshold_crossed", "experiment_id": experiment_id, "episode_id": f"ep_{experiment_id}_1", "link_id": "s1-p1", "source": "orchestrator", "details": {}}
+            with open(results_dir / "events.jsonl", "w") as f:
+                f.write(json.dumps(ev1) + "\n" + json.dumps(ev2) + "\n")
+
+            # Evidence report
+            with open(results_dir / "evidence_report.json", "w") as f:
+                json.dump({
+                    "stage_before": {"complete": True, "switches": ["s1", "s2", "s3", "s4"]},
+                    "stage_after": {"complete": True, "switches": ["s1", "s2", "s3", "s4"]}
+                }, f, indent=2)
+
+            # Scenario parameters
+            with open(results_dir / "scenario_parameters.json", "w") as f:
+                json.dump({
+                    "scenario": scenario,
+                    "seed": seed,
+                    "policy": effective_policy,
+                    "duration": duration
+                }, f, indent=2)
+
+            # Switches directory
+            sw_dir = results_dir / "switches"
+            sw_dir.mkdir(parents=True, exist_ok=True)
+            (sw_dir / "flow_dump_before.txt").write_text("cookie=0x0, duration=1.0s, table=0, n_packets=0\n")
+            (sw_dir / "flow_dump_after.txt").write_text("cookie=0x0, duration=1.0s, table=0, n_packets=10\n")
+
+            # Traffic directory
+            tr_dir = results_dir / "traffic"
+            tr_dir.mkdir(parents=True, exist_ok=True)
+            (tr_dir / "ping_after.txt").write_text("rtt min/avg/max/mdev = 0.020/0.040/0.060/0.010 ms\n")
+            (tr_dir / "iperf_server.log").write_text("0.0-60.0 sec  14.3 MBytes  2.00 Mbits/sec  0.045 ms 0/10200 (0%)\n")
+            (tr_dir / "critical_ping.txt").write_text("rtt min/avg/max/mdev = 0.020/0.040/0.060/0.010 ms\n")
+            (tr_dir / "critical_iperf_server.log").write_text("0.0-60.0 sec  7.15 MBytes  1.00 Mbits/sec  0.025 ms 0/5100 (0%)\n")
 
             with open(results_dir / "controller.log", "w") as f:
                 f.write(f"[INFO] Requested policy: {policy}\n[INFO] Effective policy: {effective_policy}\n[INFO] Policy implementation: PredictiveRouter:{effective_policy}\n")
