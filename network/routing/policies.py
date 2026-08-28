@@ -22,6 +22,19 @@ SCIENTIFIC_LABELS = {
     "predictive": "predictive_ml"
 }
 
+TERMINAL_STATUSES = [
+    "completed",
+    "stopped",
+    "environment_unavailable",
+    "policy_sync_failed",
+    "controller_failed",
+    "scenario_failed",
+    "timed_out",
+    "cleanup_failed",
+    "backend_finalization_failed",
+    "completed_with_missing_evidence"
+]
+
 
 def normalize_policy(policy: str) -> str:
     """

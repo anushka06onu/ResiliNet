@@ -1,0 +1,31 @@
+# ResiliNet Empirical Campaign Specification
+scenarios:
+  - normal
+  - gradual_congestion
+  - sudden_surge
+  - concurrent_flows
+
+policies:
+  - static
+  - reactive
+  - predictive
+
+seeds:
+  - 42
+  - 43
+  - 44
+  - 45
+  - 46
+
+duration_seconds: 60
+required_runs: 60
+pilot:
+  scenario: gradual_congestion
+  policies:
+    - static
+    - reactive
+    - predictive
+  seeds:
+    - 42
+    - 43
+  required_runs: 6

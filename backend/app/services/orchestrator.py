@@ -4,6 +4,7 @@ import sys
 import threading
 import uuid
 from datetime import datetime, timezone
+from typing import Optional, Dict, List, Any
 
 # Ensure network is accessible
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -31,6 +32,9 @@ class Orchestrator:
         self.routing_decisions = []
         self.policy = "predictive"
         self.active_experiment_id = None
+        self.prediction_active = {}
+        self.violation_active = {}
+        self.active_episodes = {}
         from app.db.database import db_manager
         self.db_manager = db_manager
 
@@ -47,6 +51,9 @@ class Orchestrator:
         self.active_experiment_id = experiment_id
         self.set_policy(policy)
         self.routing_decisions.clear()
+        self.prediction_active.clear()
+        self.violation_active.clear()
+        self.active_episodes.clear()
         # Reset flow SLA states
         for flow in self.flows.values():
             flow["state"] = "STABLE"
@@ -79,45 +86,46 @@ class Orchestrator:
         self._derive_flows_from_topology(hosts)
 
     def _derive_flows_from_topology(self, hosts):
-        """Auto-generate baseline flows between discovered hosts dynamically."""
-        sorted_hosts = sorted(hosts)
-        n = len(sorted_hosts)
-        expected_pairs = []
-        for i in range(n // 2):
-            src = sorted_hosts[i]
-            dst = sorted_hosts[n - 1 - i]
-            tier = "Critical" if i == 0 else "Background"
-            expected_pairs.append((src, dst, tier))
+        """Derives standard end-to-end flows between discovered hosts."""
+        self.flows.clear()
+        self.flow_locks.clear()
 
-        for idx, (src, dst, tier) in enumerate(expected_pairs):
-            if src in hosts and dst in hosts:
-                path = self.router.calculate_path(src, dst)
-                if path:
-                    flow_id = f"f_{idx+1}"
-                    # Ensure we don't overwrite if it already exists to avoid resetting state
-                    if flow_id not in self.flows:
-                        self.register_flow(flow_id, src, dst, path, tier)
+        for i in range(len(hosts)):
+            for j in range(i + 1, len(hosts)):
+                src_host = hosts[i]
+                dst_host = hosts[j]
+                flow_id = f"flow_{src_host}_{dst_host}"
 
-    def register_flow(self, flow_id, src, dst, initial_path, tier="Standard"):
-        self.flows[flow_id] = {
-            "flow_id": flow_id,
-            "src": src,
-            "dst": dst,
-            "tier": tier,
-            "state": "STABLE",
-            "sla_status": "Healthy",
-            "current_path": initial_path
-        }
-        self.flow_locks[flow_id] = threading.Lock()
-        logging.info(f"Registered {tier} flow {flow_id} from {src} to {dst}: {initial_path}")
+                # Calculate shortest path in current graph
+                try:
+                    import networkx as nx
+                    path = nx.shortest_path(self.router.graph, source=src_host, target=dst_host)
+                except Exception:
+                    path = [src_host, dst_host]
 
-    def handle_telemetry_event(self, event):
-        """Process a telemetry event, update risks, and trigger routing if necessary."""
-        payload = event.get("payload", {})
+                self.flows[flow_id] = {
+                    "flow_id": flow_id,
+                    "src": src_host,
+                    "dst": dst_host,
+                    "current_path": path,
+                    "state": "STABLE",
+                    "sla_status": "Healthy"
+                }
+                self.flow_locks[flow_id] = threading.Lock()
+
+    def handle_telemetry_event(self, event: dict):
+        """Adapter for legacy event-based telemetry processing."""
+        payload = event.get("payload", event)
+        return self.ingest_telemetry(payload)
+
+    def ingest_telemetry(self, payload: dict):
+        """Processes incoming switch/link telemetry, updates risks, and handles state transitions."""
         link_id = payload.get("link_id")
-        risk = payload.get("predicted_risk")
-        is_violation = payload.get("is_violation_predicted")
+        risk = payload.get("risk") if "risk" in payload else payload.get("predicted_risk")
+        is_violation = payload.get("is_violation", False) or payload.get("is_violation_predicted", False)
         is_violation_actual = payload.get("is_violation_actual", False)
+        loss = payload.get("loss_percent", 0.0) if "loss_percent" in payload else payload.get("loss_rate", 0.0)
+        rtt = payload.get("control_plane_rtt_ms", 0.0) if "control_plane_rtt_ms" in payload else payload.get("latency_ms", 0.0)
 
         if link_id:
             try:
@@ -135,21 +143,26 @@ class Orchestrator:
                         target_switch = v
 
                 if edge_found and target_switch:
-                    if is_violation:
-                        self._log_experiment_event("prediction_threshold_crossed", {
-                            "link_id": link_id,
-                            "source_switch": switch,
-                            "target_switch": target_switch,
-                            "risk": risk,
-                            "source": "orchestrator"
-                        })
-                    if is_violation_actual:
-                        self._log_experiment_event("sla_violation_started", {
-                            "link_id": link_id,
-                            "source_switch": switch,
-                            "target_switch": target_switch,
-                            "source": "orchestrator"
-                        })
+                    if link_id not in self.active_episodes:
+                        self.active_episodes[link_id] = str(uuid.uuid4())[:8]
+                    episode_id = self.active_episodes[link_id]
+
+                    # Transition-based prediction event emission
+                    if is_violation and not self.prediction_active.get(link_id, False):
+                        self.prediction_active[link_id] = True
+                        self._log_experiment_event("prediction_threshold_crossed", link_id=link_id, episode_id=episode_id, details={"risk": risk})
+                    elif not is_violation and self.prediction_active.get(link_id, False):
+                        self.prediction_active[link_id] = False
+                        self._log_experiment_event("prediction_threshold_cleared", link_id=link_id, episode_id=episode_id, details={"risk": risk})
+
+                    # Transition-based SLA violation event emission
+                    if is_violation_actual and not self.violation_active.get(link_id, False):
+                        self.violation_active[link_id] = True
+                        self._log_experiment_event("sla_violation_started", link_id=link_id, episode_id=episode_id, details={"loss_percent": loss, "rtt_ms": rtt})
+                    elif not is_violation_actual and self.violation_active.get(link_id, False):
+                        # Recovery confirmed by subsequent measured telemetry
+                        self.violation_active[link_id] = False
+                        self._log_experiment_event("sla_recovered", link_id=link_id, episode_id=episode_id, details={"loss_percent": loss, "rtt_ms": rtt})
 
                     evaluate = False
                     if self.policy == "predictive" and is_violation:
@@ -165,6 +178,9 @@ class Orchestrator:
 
     def _evaluate_affected_flows(self, congested_u, congested_v, is_violation_actual=False, is_violation_predicted=False):
         """Find flows crossing the congested directed edge and attempt to reroute them."""
+        link_id = f"{congested_u}-{congested_v}"
+        episode_id = self.active_episodes.get(link_id) or str(uuid.uuid4())[:8]
+
         for flow_id, flow in self.flows.items():
             # Attempt to acquire lock without blocking so we don't hold up other evaluations
             lock = self.flow_locks.get(flow_id)
@@ -201,9 +217,16 @@ class Orchestrator:
                             nw_src = "10.0.0.1"
                             nw_dst = "10.0.0.2"
 
-                        logging.info(f"Flow {flow_id} crosses congested edge {congested_u}->{congested_v}. Evaluating reroute...")
-
                         risk_before = self.router.calculate_path_risk(switch_path)
+
+                        # 1. Log reroute started BEFORE the rerouting operation
+                        self._log_experiment_event(
+                            "reroute_started",
+                            flow_id=flow_id,
+                            link_id=link_id,
+                            episode_id=episode_id,
+                            details={"risk_before": risk_before}
+                        )
 
                         flow["state"] = "INSTALLING"
 
@@ -220,37 +243,26 @@ class Orchestrator:
                         success = result.success
                         msg = result.message
                         proposed_path = result.proposed_path
-
-                        flow["state"] = "VERIFYING"
-
-                        # Note: In a real async system we'd wait here, but for this mock we assume evaluate_and_reroute does it
-
-                        risk_after = self.router.calculate_path_risk(proposed_path) if success and proposed_path else None
-
                         failure_stage = result.failure_stage
                         error_type = result.error_type
+                        risk_after = self.router.calculate_path_risk(proposed_path) if success and proposed_path else None
                         rollback_result = None
                         if result.rollback_attempted:
                             rollback_result = "success" if result.rollback_success else "failed"
 
-                        # Log structured events to events.jsonl
-                        self._log_experiment_event("reroute_started", {
-                            "flow_id": flow_id,
-                            "link_id": f"{congested_u}-{congested_v}",
-                            "source": "orchestrator",
-                            "risk_before": risk_before
-                        })
+                        flow["state"] = "VERIFYING"
 
-                        # Record decision
+                        # 2. Record decision
                         decision = {
                             "decision_id": str(uuid.uuid4()),
                             "experiment_id": self.active_experiment_id or "unknown",
+                            "episode_id": episode_id,
                             "flow_id": flow_id,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                             "risk_before": risk_before,
                             "risk_after": risk_after,
                             "original_path": path,
-                            "proposed_path": proposed_path if success else (proposed_path if proposed_path else None),
+                            "proposed_path": proposed_path if success else None,
                             "safeguard_result": msg,
                             "installation_status": "INSTALLED" if (success or failure_stage == "verification") else "FAILED",
                             "verification_status": "VERIFIED" if success else ("FAILED" if failure_stage == "verification" else "SKIPPED"),
@@ -267,31 +279,35 @@ class Orchestrator:
                             if path[-1].startswith("h"): new_full_path.append(path[-1])
                             flow["current_path"] = new_full_path
                             flow["state"] = "STABLE"
-                            self._log_experiment_event("reroute_verified_at", {
-                                "flow_id": flow_id,
-                                "link_id": f"{congested_u}-{congested_v}",
-                                "source": "orchestrator",
-                                "new_path": new_full_path
-                            })
-                            self._log_experiment_event("sla_recovered", {
-                                "flow_id": flow_id,
-                                "link_id": f"{congested_u}-{congested_v}",
-                                "source": "orchestrator"
-                            })
+
+                            # 3. Log reroute verified
+                            self._log_experiment_event(
+                                "reroute_verified_at",
+                                flow_id=flow_id,
+                                link_id=link_id,
+                                episode_id=episode_id,
+                                details={"new_path": new_full_path}
+                            )
                         else:
                             if result.rollback_attempted:
-                                self._log_experiment_event("rollback_started", {"flow_id": flow_id, "source": "orchestrator"})
+                                self._log_experiment_event("rollback_started", flow_id=flow_id, link_id=link_id, episode_id=episode_id)
                                 if result.rollback_success:
-                                    flow["state"] = "ROLLBACK_COMPLETE"
-                                    # Recovery transition to stable on original path
                                     flow["state"] = "STABLE"
-                                    self._log_experiment_event("rollback_completed", {"flow_id": flow_id, "status": "SUCCESS", "source": "orchestrator"})
+                                    self._log_experiment_event("rollback_completed", flow_id=flow_id, link_id=link_id, episode_id=episode_id, details={"status": "SUCCESS"})
                                 else:
                                     flow["state"] = "DEGRADED"
-                                    self._log_experiment_event("rollback_completed", {"flow_id": flow_id, "status": "FAILED", "source": "orchestrator"})
+                                    self._log_experiment_event("rollback_completed", flow_id=flow_id, link_id=link_id, episode_id=episode_id, details={"status": "FAILED"})
                             else:
                                 flow["state"] = "DEGRADED"
                             flow["sla_status"] = "Violated"
+
+                            self._log_experiment_event(
+                                "reroute_failed",
+                                flow_id=flow_id,
+                                link_id=link_id,
+                                episode_id=episode_id,
+                                details={"failure_stage": failure_stage, "error_type": error_type}
+                            )
 
                         self.routing_decisions.append(decision)
                         try:
@@ -301,27 +317,30 @@ class Orchestrator:
                 finally:
                     lock.release()
 
-    def _log_experiment_event(self, event_name: str, details: dict = None):
-        """Append structured event to active experiment events.jsonl."""
+    def _log_experiment_event(self, event_name: str, flow_id: Optional[str] = None, link_id: Optional[str] = None, episode_id: Optional[str] = None, details: Optional[dict] = None):
+        """Append structured event to active experiment orchestrator_events.jsonl."""
         if not self.active_experiment_id:
             return
         import json
         from pathlib import Path
         project_root = Path(__file__).resolve().parents[3]
-        events_file = project_root / "experiments" / "results" / self.active_experiment_id / "events.jsonl"
+        events_file = project_root / "experiments" / "results" / self.active_experiment_id / "orchestrator_events.jsonl"
         events_file.parent.mkdir(parents=True, exist_ok=True)
         event_record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event": event_name,
             "experiment_id": self.active_experiment_id,
-            "source": details.get("source", "orchestrator") if details else "orchestrator",
+            "episode_id": episode_id or "ep_default",
+            "flow_id": flow_id,
+            "link_id": link_id,
+            "source": "orchestrator",
             "details": details or {}
         }
         try:
             with open(events_file, "a") as f:
                 f.write(json.dumps(event_record) + "\n")
         except Exception as e:
-            logging.error(f"Failed to log event {event_name}: {e}")
+            logging.error(f"Failed to log orchestrator event {event_name}: {e}")
 
 # Singleton instance
 orchestrator = Orchestrator()

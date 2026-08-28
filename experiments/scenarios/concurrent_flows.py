@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+import json
 import os
 import sys
 import time
@@ -40,6 +39,17 @@ def run_concurrent_flows():
     crit_bw = round(rng.uniform(0.9, 1.1), 2)
     video_bw = round(rng.uniform(2.8, 3.2), 2)
     bulk_bw = round(rng.uniform(4.5, 5.5), 2)
+
+    scenario_params = {
+        "scenario": "concurrent_flows",
+        "seed": seed,
+        "policy": policy,
+        "critical_bw_mbps": crit_bw,
+        "video_bw_mbps": video_bw,
+        "bulk_bw_mbps": bulk_bw
+    }
+    with open(results_dir / "scenario_parameters.json", "w") as pf:
+        json.dump(scenario_params, pf, indent=2)
 
     record_policy(policy, exp_id)
     info(f'*** Starting Concurrent Competing Flows Scenario (Seed: {seed}, Duration: {duration}s, Policy: {policy})\n')

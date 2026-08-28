@@ -14,18 +14,51 @@ def sha256_bytes(data: bytes) -> str:
     return h.hexdigest()
 
 
-def log_experiment_event(results_dir, event_type: str, details: dict = None):
-    """Appends a structured timestamped event to events.jsonl in the run directory."""
+def log_experiment_event(results_dir, event_type: str, details: dict = None, flow_id: str = None, link_id: str = None, episode_id: str = None):
+    """Appends a structured timestamped event to scenario_events.jsonl in the run directory."""
     results_path = Path(results_dir)
     results_path.mkdir(parents=True, exist_ok=True)
+    exp_id = results_path.name
     event = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "event": event_type,
+        "experiment_id": exp_id,
+        "episode_id": episode_id or "ep_scenario",
+        "flow_id": flow_id,
+        "link_id": link_id,
+        "source": "scenario",
         "details": details or {}
     }
-    with open(results_path / "events.jsonl", "a") as f:
+    with open(results_path / "scenario_events.jsonl", "a") as f:
         f.write(json.dumps(event) + "\n")
     return event
+
+
+def merge_and_sort_events(results_dir: Path) -> int:
+    """
+    Merges scenario_events.jsonl and orchestrator_events.jsonl into a unified events.jsonl
+    sorted strictly in chronological timestamp order.
+    """
+    results_path = Path(results_dir)
+    all_events = []
+
+    for src_name in ["scenario_events.jsonl", "orchestrator_events.jsonl", "events.jsonl"]:
+        ev_file = results_path / src_name
+        if ev_file.exists() and ev_file.name != "events.jsonl":
+            for line in ev_file.read_text().splitlines():
+                if line.strip():
+                    try:
+                        all_events.append(json.loads(line))
+                    except Exception:
+                        pass
+
+    if all_events:
+        all_events.sort(key=lambda x: x.get("timestamp", ""))
+        with open(results_path / "events.jsonl", "w") as f:
+            for ev in all_events:
+                f.write(json.dumps(ev) + "\n")
+
+    return len(all_events)
 
 
 def apply_and_verify_netem(node, interface: str, delay_ms: float, loss_pct: float, results_dir, event_name="congestion_injected_at", stage=1):

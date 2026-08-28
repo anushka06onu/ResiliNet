@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import os
 import sys
 import time
@@ -37,6 +38,19 @@ def run_gradual_congestion():
     phase1_loss_pct = round(rng.uniform(1.8, 2.2), 1)
     phase2_delay_ms = round(rng.uniform(23.0, 27.0), 1)
     phase2_loss_pct = round(rng.uniform(4.5, 5.5), 1)
+
+    scenario_params = {
+        "scenario": "gradual_congestion",
+        "seed": seed,
+        "policy": policy,
+        "bandwidth_mbps": bw_mbps,
+        "phase_1_delay_ms": phase1_delay_ms,
+        "phase_1_loss_pct": phase1_loss_pct,
+        "phase_2_delay_ms": phase2_delay_ms,
+        "phase_2_loss_pct": phase2_loss_pct
+    }
+    with open(results_dir / "scenario_parameters.json", "w") as pf:
+        json.dump(scenario_params, pf, indent=2)
 
     record_policy(policy, exp_id)
     info(f'*** Starting Gradual Congestion Scenario (Seed: {seed}, Policy: {policy}, Target BW: {bw_mbps}Mbps)\n')

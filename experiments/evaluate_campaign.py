@@ -4,15 +4,15 @@ ResiliNet Empirical Campaign Evaluation & Statistical Metrics Aggregator.
 
 Performs rigorous scholarship-grade statistical evaluation across routing policies:
 - Strict bidirectional SHA256 integrity verification (with path containment checks)
-- Exact 60-run matrix validation (4 scenarios x 3 policies x 5 seeds) with missing/duplicate reports
-- Configuration fingerprint consistency verification
+- Exact 60-run matrix validation (4 scenarios x 3 policies x 5 seeds) with missing/duplicate/unexpected reports
+- Campaign invariant fingerprint consistency verification
 - Strict eligibility filtering (excluding mock, partial, or unverified runs to excluded_runs.csv)
-- Separation of control-plane RTT vs end-to-end RTT
-- Multi-class concurrent traffic parsing (Critical Tier-1, Video, Bulk)
-- Genuine matched event timing for warning lead time and SLA recovery time (no proxies)
+- Data quality exception tracking (to data_quality_issues.csv)
+- Episode-, flow-, and link-matched event timing (warning lead time, reroute latency, SLA recovery, SLA violation duration)
 - Student's t-distribution 95% Confidence Intervals with per-metric sample size and missing counts
 - Paired-policy comparisons across all metrics (Cohen's dz, paired t-intervals)
-- ML predictive performance validation (Precision, Recall, F1, Brier score, False-Alert Rate)
+- Full ML predictive performance validation (Precision, Recall, Specificity, F1, PR-AUC, ROC-AUC, Brier score, False-Alert Rate)
+- Pure strict JSON serialization (NaN/Infinity -> null)
 """
 
 import argparse
@@ -29,9 +29,41 @@ import pandas as pd
 from scipy import stats
 
 
-EXPECTED_SCENARIOS = ["normal", "gradual_congestion", "sudden_surge", "concurrent_flows"]
-EXPECTED_POLICIES = ["static", "reactive", "predictive"]
-EXPECTED_SEEDS = [42, 43, 44, 45, 46]
+def load_campaign_spec(project_root: Path) -> Dict[str, Any]:
+    """Loads campaign specification from campaign.yaml or fallback defaults."""
+    yaml_path = project_root / "experiments" / "campaign.yaml"
+    if yaml_path.exists():
+        try:
+            import yaml
+            with open(yaml_path, "r") as yf:
+                return yaml.safe_load(yf)
+        except Exception:
+            pass
+    return {
+        "scenarios": ["normal", "gradual_congestion", "sudden_surge", "concurrent_flows"],
+        "policies": ["static", "reactive", "predictive"],
+        "seeds": [42, 43, 44, 45, 46],
+        "duration_seconds": 60,
+        "required_runs": 60
+    }
+
+
+def sanitize_for_json(obj: Any) -> Any:
+    """Recursively converts NaN, Infinity, and numpy scalars into strict standard JSON-compliant types."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, (np.floating, np.integer)):
+        val = obj.item()
+        if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+            return None
+        return val
+    elif isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(x) for x in obj]
+    return obj
 
 
 def verify_directory_checksums(exp_dir: Path) -> Tuple[bool, Optional[str]]:
@@ -89,56 +121,171 @@ def verify_directory_checksums(exp_dir: Path) -> Tuple[bool, Optional[str]]:
         return False, f"Checksum verification exception: {e}"
 
 
-def parse_ping_latency(ping_file: Path) -> Dict[str, Optional[float]]:
+def parse_ping_latency(ping_file: Path, errors_list: List[dict]) -> Dict[str, Optional[float]]:
     """Parses min/avg/max/mdev from ping output text."""
     if not ping_file.exists():
         return {"rtt_min_ms": np.nan, "rtt_avg_ms": np.nan, "rtt_max_ms": np.nan, "rtt_mdev_ms": np.nan}
-    content = ping_file.read_text()
-    match = re.search(r"rtt min/avg/max/mdev = ([\d\.]+)/([\d\.]+)/([\d\.]+)/([\d\.]+) ms", content)
-    if match:
-        return {
-            "rtt_min_ms": float(match.group(1)),
-            "rtt_avg_ms": float(match.group(2)),
-            "rtt_max_ms": float(match.group(3)),
-            "rtt_mdev_ms": float(match.group(4))
-        }
+    try:
+        content = ping_file.read_text()
+        match = re.search(r"rtt min/avg/max/mdev = ([\d\.]+)/([\d\.]+)/([\d\.]+)/([\d\.]+) ms", content)
+        if match:
+            return {
+                "rtt_min_ms": float(match.group(1)),
+                "rtt_avg_ms": float(match.group(2)),
+                "rtt_max_ms": float(match.group(3)),
+                "rtt_mdev_ms": float(match.group(4))
+            }
+    except Exception as exc:
+        errors_list.append({"artifact": ping_file.name, "error": str(exc)})
     return {"rtt_min_ms": np.nan, "rtt_avg_ms": np.nan, "rtt_max_ms": np.nan, "rtt_mdev_ms": np.nan}
 
 
-def parse_iperf_log(log_path: Path) -> Dict[str, Optional[float]]:
+def parse_iperf_log(log_path: Path, errors_list: List[dict]) -> Dict[str, Optional[float]]:
     """Parses bandwidth, jitter, and loss percentage from an iperf server/client log."""
     if not log_path.exists():
         return {"throughput_mbps": np.nan, "jitter_ms": np.nan, "packet_loss_pct": np.nan}
 
-    content = log_path.read_text()
-    if not content.strip():
-        return {"throughput_mbps": np.nan, "jitter_ms": np.nan, "packet_loss_pct": np.nan}
+    try:
+        content = log_path.read_text()
+        if not content.strip():
+            return {"throughput_mbps": np.nan, "jitter_ms": np.nan, "packet_loss_pct": np.nan}
 
-    # Match UDP server report: 0.0-60.0 sec  14.3 MBytes  2.00 Mbits/sec  0.045 ms 0/10200 (0%)
-    match_udp = re.findall(r"([\d\.]+)\s+Mbits/sec\s+([\d\.]+)\s+ms\s+\d+/\d+\s+\(([\d\.]+)%\)", content)
-    if match_udp:
-        last = match_udp[-1]
-        return {
-            "throughput_mbps": float(last[0]),
-            "jitter_ms": float(last[1]),
-            "packet_loss_pct": float(last[2])
-        }
+        # Match UDP server report: 0.0-60.0 sec  14.3 MBytes  2.00 Mbits/sec  0.045 ms 0/10200 (0%)
+        match_udp = re.findall(r"([\d\.]+)\s+Mbits/sec\s+([\d\.]+)\s+ms\s+\d+/\d+\s+\(([\d\.]+)%\)", content)
+        if match_udp:
+            last = match_udp[-1]
+            return {
+                "throughput_mbps": float(last[0]),
+                "jitter_ms": float(last[1]),
+                "packet_loss_pct": float(last[2])
+            }
 
-    # Match TCP or client throughput
-    match_tp = re.findall(r"([\d\.]+)\s+Mbits/sec", content)
-    if match_tp:
-        return {
-            "throughput_mbps": float(match_tp[-1]),
-            "jitter_ms": np.nan,
-            "packet_loss_pct": np.nan
-        }
+        # Match TCP or client throughput
+        match_tp = re.findall(r"([\d\.]+)\s+Mbits/sec", content)
+        if match_tp:
+            return {
+                "throughput_mbps": float(match_tp[-1]),
+                "jitter_ms": np.nan,
+                "packet_loss_pct": np.nan
+            }
+    except Exception as exc:
+        errors_list.append({"artifact": log_path.name, "error": str(exc)})
 
     return {"throughput_mbps": np.nan, "jitter_ms": np.nan, "packet_loss_pct": np.nan}
 
 
-def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+def parse_event_timing_episodes(exp_dir: Path, errors_list: List[dict]) -> Dict[str, Any]:
     """
-    Parses a single experiment directory.
+    Parses events.jsonl with episode-, flow-, and link-matched timing calculations:
+    - Warning lead time: sla_violation_started - prediction_threshold_crossed
+    - Reroute latency: reroute_verified_at - reroute_started
+    - Recovery time: sla_recovered - sla_violation_started
+    - SLA violation duration: sla_recovered - sla_violation_started
+    - Unrecovered episode count
+    """
+    res = {
+        "warning_lead_time_s": np.nan,
+        "reroute_latency_s": np.nan,
+        "recovery_time_s": np.nan,
+        "violation_duration_s": np.nan,
+        "total_violation_duration_s": 0.0,
+        "unrecovered_episodes_count": 0,
+        "reroute_started_count": 0,
+        "reroute_verified_successes": 0,
+        "rollback_count": 0
+    }
+
+    events_path = exp_dir / "events.jsonl"
+    if not events_path.exists():
+        return res
+
+    try:
+        events = [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]
+    except Exception as exc:
+        errors_list.append({"artifact": "events.jsonl", "error": str(exc)})
+        return res
+
+    episodes: Dict[str, Dict[str, Any]] = {}
+
+    for ev in events:
+        ev_name = ev.get("event")
+        ep_id = ev.get("episode_id") or f"{ev.get('link_id')}_{ev.get('flow_id')}"
+        ts_str = ev.get("timestamp")
+        if not ts_str:
+            continue
+        ts = pd.to_datetime(ts_str)
+
+        if ep_id not in episodes:
+            episodes[ep_id] = {
+                "pred_cross": None,
+                "violation_start": None,
+                "reroute_start": None,
+                "reroute_verified": None,
+                "sla_recovered": None,
+                "rollbacks": 0
+            }
+
+        ep = episodes[ep_id]
+        if ev_name == "prediction_threshold_crossed" and ep["pred_cross"] is None:
+            ep["pred_cross"] = ts
+        elif ev_name == "sla_violation_started" and ep["violation_start"] is None:
+            ep["violation_start"] = ts
+        elif ev_name == "reroute_started":
+            ep["reroute_start"] = ts
+            res["reroute_started_count"] += 1
+        elif ev_name == "reroute_verified_at":
+            ep["reroute_verified"] = ts
+            res["reroute_verified_successes"] += 1
+        elif ev_name == "rollback_completed":
+            ep["rollbacks"] += 1
+            res["rollback_count"] += 1
+        elif ev_name == "sla_recovered" and ep["sla_recovered"] is None:
+            ep["sla_recovered"] = ts
+
+    lead_times = []
+    reroute_latencies = []
+    recovery_times = []
+    violation_durations = []
+    unrecovered_count = 0
+
+    for ep_id, ep in episodes.items():
+        # Warning lead time
+        if ep["pred_cross"] is not None and ep["violation_start"] is not None:
+            if ep["violation_start"] >= ep["pred_cross"]:
+                lead_times.append((ep["violation_start"] - ep["pred_cross"]).total_seconds())
+
+        # Reroute latency
+        if ep["reroute_start"] is not None and ep["reroute_verified"] is not None:
+            if ep["reroute_verified"] >= ep["reroute_start"]:
+                reroute_latencies.append((ep["reroute_verified"] - ep["reroute_start"]).total_seconds())
+
+        # Recovery time & violation duration
+        if ep["violation_start"] is not None:
+            if ep["sla_recovered"] is not None:
+                if ep["sla_recovered"] >= ep["violation_start"]:
+                    dur = (ep["sla_recovered"] - ep["violation_start"]).total_seconds()
+                    recovery_times.append(dur)
+                    violation_durations.append(dur)
+            else:
+                unrecovered_count += 1
+
+    if lead_times:
+        res["warning_lead_time_s"] = float(np.mean(lead_times))
+    if reroute_latencies:
+        res["reroute_latency_s"] = float(np.mean(reroute_latencies))
+    if recovery_times:
+        res["recovery_time_s"] = float(np.mean(recovery_times))
+    if violation_durations:
+        res["violation_duration_s"] = float(np.mean(violation_durations))
+        res["total_violation_duration_s"] = float(np.sum(violation_durations))
+    res["unrecovered_episodes_count"] = unrecovered_count
+
+    return res
+
+
+def parse_run_directory(exp_dir: Path, quality_errors: List[dict]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+    """
+    Parses a single experiment directory with complete provenance, checksums, and traffic parsing.
     Returns (record, None) if eligible, or (None, exclusion_reason) if excluded.
     """
     manifest_path = exp_dir / "manifest.json"
@@ -148,268 +295,200 @@ def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Option
     try:
         manifest = json.loads(manifest_path.read_text())
     except Exception as e:
-        return None, {"experiment_id": exp_dir.name, "reason": f"Corrupt manifest: {e}"}
+        quality_errors.append({"experiment_id": exp_dir.name, "artifact": "manifest.json", "error": str(e)})
+        return None, {"experiment_id": exp_dir.name, "reason": f"manifest.json corrupt: {e}"}
 
     exp_id = manifest.get("experiment_id", exp_dir.name)
+    scenario = manifest.get("scenario")
+    effective_policy = manifest.get("effective_policy")
+    seed = manifest.get("seed")
 
-    # 1. Strict Eligibility Filters
-    if not manifest.get("real_experiment"):
-        return None, {"experiment_id": exp_id, "reason": "Excluded: mock/fixture run (real_experiment=false)"}
+    # Eligibility filters
+    if not manifest.get("real_experiment", False):
+        return None, {"experiment_id": exp_id, "reason": "Not a real experiment (mock data)"}
+
     if manifest.get("data_origin") != "mininet":
-        return None, {"experiment_id": exp_id, "reason": f"Excluded: data_origin='{manifest.get('data_origin')}' != 'mininet'"}
-    if manifest.get("status") != "completed":
-        return None, {"experiment_id": exp_id, "reason": f"Excluded: status='{manifest.get('status')}' != 'completed'"}
-    if not manifest.get("evidence_complete"):
-        return None, {"experiment_id": exp_id, "reason": "Excluded: evidence_complete is False"}
-    if manifest.get("eligible_for_analysis") is False:
-        return None, {"experiment_id": exp_id, "reason": "Excluded: eligible_for_analysis is explicitly False"}
+        return None, {"experiment_id": exp_id, "reason": f"Invalid data origin: {manifest.get('data_origin')}"}
 
+    if manifest.get("status") != "completed":
+        return None, {"experiment_id": exp_id, "reason": f"Experiment status not completed: {manifest.get('status')}"}
+
+    if not manifest.get("evidence_complete", False):
+        return None, {"experiment_id": exp_id, "reason": "Evidence collection incomplete"}
+
+    if not manifest.get("eligible_for_analysis", True):
+        return None, {"experiment_id": exp_id, "reason": "Declared not eligible for analysis"}
+
+    # Policy sync and backend finalization success
     policy_sync = manifest.get("policy_sync", {})
     if policy_sync.get("required") and not policy_sync.get("successful"):
-        return None, {"experiment_id": exp_id, "reason": "Excluded: backend policy synchronization failed"}
+        return None, {"experiment_id": exp_id, "reason": "Backend policy sync failed"}
 
     backend_fin = manifest.get("backend_finalization", {})
     if backend_fin.get("required") and not backend_fin.get("successful"):
-        return None, {"experiment_id": exp_id, "reason": "Excluded: backend finalization failed"}
+        return None, {"experiment_id": exp_id, "reason": "Backend finalization failed"}
 
-    # 2. Checksum Verification
-    checksum_ok, err_msg = verify_directory_checksums(exp_dir)
-    if not checksum_ok:
-        return None, {"experiment_id": exp_id, "reason": f"Checksum verification failed: {err_msg}"}
+    # Bidirectional Checksum Verification
+    chk_ok, chk_err = verify_directory_checksums(exp_dir)
+    if not chk_ok:
+        quality_errors.append({"experiment_id": exp_id, "artifact": "SHA256SUMS", "error": chk_err})
+        return None, {"experiment_id": exp_id, "reason": f"Checksum verification failed: {chk_err}"}
 
-    # 3. Parse Telemetry (Control-Plane Metrics)
-    control_plane_rtt_mean = np.nan
-    telemetry_loss_mean = np.nan
-    telemetry_parsed = False
-    telemetry_path = exp_dir / "telemetry.csv"
-    if telemetry_path.exists() and telemetry_path.stat().st_size > 0:
-        try:
-            df_tel = pd.read_csv(telemetry_path)
-            if not df_tel.empty:
-                if "control_plane_rtt_ms" in df_tel.columns:
-                    control_plane_rtt_mean = float(df_tel["control_plane_rtt_ms"].dropna().mean())
-                if "loss_percent" in df_tel.columns:
-                    telemetry_loss_mean = float(df_tel["loss_percent"].dropna().mean())
-                telemetry_parsed = True
-        except Exception:
-            pass
-
-    # 4. Parse Traffic Logs (End-to-End Application Metrics)
     traffic_dir = exp_dir / "traffic"
-    ping_parsed = False
-    iperf_parsed = False
-    end_to_end_rtt_ms = np.nan
 
-    overall_tp = np.nan
-    overall_loss = np.nan
-    overall_jitter = np.nan
+    # Ping parsing
+    ping_after = parse_ping_latency(traffic_dir / "ping_after.txt", quality_errors)
 
-    crit_tp = np.nan
-    crit_loss = np.nan
-    crit_jitter = np.nan
-    video_tp = np.nan
-    bulk_tp = np.nan
+    # Iperf overall parsing
+    iperf_data = parse_iperf_log(traffic_dir / "iperf_server.log", quality_errors)
 
-    if traffic_dir.exists():
-        # Ping
-        ping_after = parse_ping_latency(traffic_dir / "ping_after.txt")
-        if not np.isnan(ping_after.get("rtt_avg_ms", np.nan)):
-            end_to_end_rtt_ms = ping_after["rtt_avg_ms"]
-            ping_parsed = True
+    # Critical flow parsing
+    crit_ping = parse_ping_latency(traffic_dir / "critical_ping.txt", quality_errors)
+    crit_iperf = parse_iperf_log(traffic_dir / "critical_iperf_server.log", quality_errors)
 
-        # Standard iperf
-        std_iperf = parse_iperf_log(traffic_dir / "iperf_server.log")
-        if np.isnan(std_iperf["throughput_mbps"]):
-            std_iperf = parse_iperf_log(traffic_dir / "iperf_client.log")
-        if not np.isnan(std_iperf["throughput_mbps"]):
-            overall_tp = std_iperf["throughput_mbps"]
-            overall_loss = std_iperf["packet_loss_pct"]
-            overall_jitter = std_iperf["jitter_ms"]
-            iperf_parsed = True
-
-        # Concurrent traffic classes
-        crit_res = parse_iperf_log(traffic_dir / "iperf_critical_server.log")
-        if not np.isnan(crit_res["throughput_mbps"]):
-            crit_tp = crit_res["throughput_mbps"]
-            crit_loss = crit_res["packet_loss_pct"]
-            crit_jitter = crit_res["jitter_ms"]
-            iperf_parsed = True
-
-        video_res = parse_iperf_log(traffic_dir / "iperf_video_server.log")
-        if not np.isnan(video_res["throughput_mbps"]):
-            video_tp = video_res["throughput_mbps"]
-
-        bulk_res = parse_iperf_log(traffic_dir / "iperf_bulk_server.log")
-        if not np.isnan(bulk_res["throughput_mbps"]):
-            bulk_tp = bulk_res["throughput_mbps"]
-
-    # 5. Routing Decisions (Fine-grained Accounting)
-    decisions_parsed = False
-    reroute_attempts = 0
-    reroute_installations = 0
-    reroute_verified_successes = 0
-    reroute_failures = 0
-    rollback_count = 0
-
-    decisions_path = exp_dir / "routing_decisions.jsonl"
-    if decisions_path.exists():
+    # Telemetry parsing for control-plane RTT and loss
+    tel_file = exp_dir / "telemetry.csv"
+    control_plane_rtt = np.nan
+    tel_loss_mean = np.nan
+    if tel_file.exists():
         try:
-            lines = [json.loads(line) for line in decisions_path.read_text().splitlines() if line.strip()]
-            for d in lines:
-                reroute_attempts += 1
-                if d.get("installation_status") == "INSTALLED":
-                    reroute_installations += 1
-                if d.get("installation_status") == "INSTALLED" and d.get("verification_status") == "VERIFIED" and d.get("outcome_status") == "SUCCESS":
-                    reroute_verified_successes += 1
-                if d.get("installation_status") == "FAILED" or d.get("outcome_status") == "FAILED":
-                    reroute_failures += 1
-                if d.get("rollback_attempted") is True:
-                    rollback_count += 1
-            decisions_parsed = True
-        except Exception:
-            pass
+            df_tel = pd.read_csv(tel_file)
+            if "control_plane_rtt_ms" in df_tel.columns:
+                control_plane_rtt = float(df_tel["control_plane_rtt_ms"].dropna().mean())
+            if "loss_percent" in df_tel.columns:
+                tel_loss_mean = float(df_tel["loss_percent"].dropna().mean())
+        except Exception as exc:
+            quality_errors.append({"experiment_id": exp_id, "artifact": "telemetry.csv", "error": str(exc)})
 
-    # 6. Event Timeline (True Warning Lead Time & SLA Recovery Time paired by flow/link)
-    events_parsed = False
-    warning_lead_time_s = np.nan
-    recovery_time_s = np.nan
+    # Event timing parsing
+    event_metrics = parse_event_timing_episodes(exp_dir, quality_errors)
 
-    events_path = exp_dir / "events.jsonl"
-    if events_path.exists():
+    # Routing decisions metrics
+    dec_file = exp_dir / "routing_decisions.jsonl"
+    total_decisions = 0
+    installed_decisions = 0
+    if dec_file.exists():
         try:
-            events = [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]
+            decisions = [json.loads(line) for line in dec_file.read_text().splitlines() if line.strip()]
+            total_decisions = len(decisions)
+            installed_decisions = sum(1 for d in decisions if d.get("outcome_status") == "SUCCESS")
+        except Exception as exc:
+            quality_errors.append({"experiment_id": exp_id, "artifact": "routing_decisions.jsonl", "error": str(exc)})
 
-            # Match genuine orchestrator events
-            pred_cross_time = None
-            violation_start_time = None
-            sla_recovered_time = None
-
-            for ev in events:
-                ev_type = ev.get("event")
-                ts = pd.to_datetime(ev.get("timestamp"))
-                if ev_type == "prediction_threshold_crossed" and pred_cross_time is None:
-                    pred_cross_time = ts
-                elif ev_type == "sla_violation_started" and violation_start_time is None:
-                    violation_start_time = ts
-                elif ev_type in {"sla_recovered", "reroute_verified_at"} and sla_recovered_time is None:
-                    sla_recovered_time = ts
-
-            if violation_start_time and pred_cross_time and violation_start_time >= pred_cross_time:
-                warning_lead_time_s = (violation_start_time - pred_cross_time).total_seconds()
-
-            if violation_start_time and sla_recovered_time and sla_recovered_time >= violation_start_time:
-                recovery_time_s = (sla_recovered_time - violation_start_time).total_seconds()
-
-            events_parsed = True
-        except Exception:
-            pass
+    # Packet loss resolution
+    pkt_loss = iperf_data.get("packet_loss_pct")
+    if pd.isna(pkt_loss) or pkt_loss is None:
+        pkt_loss = tel_loss_mean
 
     record = {
         "experiment_id": exp_id,
-        "scenario": manifest.get("scenario"),
-        "effective_policy": manifest.get("effective_policy", manifest.get("policy")),
-        "requested_policy": manifest.get("requested_policy"),
-        "scientific_policy": manifest.get("scientific_policy"),
-        "seed": manifest.get("seed"),
-        "duration_s": manifest.get("duration"),
-        "campaign_config_fingerprint": manifest.get("campaign_config_fingerprint"),
-        "control_plane_rtt_ms": control_plane_rtt_mean,
-        "end_to_end_rtt_ms": end_to_end_rtt_ms,
-        "throughput_mbps": overall_tp if not np.isnan(overall_tp) else crit_tp,
-        "packet_loss_pct": overall_loss if not np.isnan(overall_loss) else crit_loss,
-        "jitter_ms": overall_jitter if not np.isnan(overall_jitter) else crit_jitter,
-        "critical_throughput_mbps": crit_tp,
-        "critical_packet_loss_pct": crit_loss,
-        "video_throughput_mbps": video_tp,
-        "bulk_throughput_mbps": bulk_tp,
-        "reroute_attempts": reroute_attempts,
-        "reroute_installations": reroute_installations,
-        "reroute_verified_successes": reroute_verified_successes,
-        "reroute_failures": reroute_failures,
-        "rollback_count": rollback_count,
-        "warning_lead_time_s": warning_lead_time_s,
-        "recovery_time_s": recovery_time_s,
-        "telemetry_parsed": telemetry_parsed,
-        "ping_parsed": ping_parsed,
-        "iperf_parsed": iperf_parsed,
-        "decisions_parsed": decisions_parsed,
-        "events_parsed": events_parsed
+        "scenario": scenario,
+        "effective_policy": effective_policy,
+        "seed": seed,
+        "packet_loss_pct": pkt_loss,
+        "end_to_end_rtt_ms": ping_after.get("rtt_avg_ms"),
+        "control_plane_rtt_ms": control_plane_rtt,
+        "throughput_mbps": iperf_data.get("throughput_mbps"),
+        "jitter_ms": iperf_data.get("jitter_ms"),
+        "critical_packet_loss_pct": crit_iperf.get("packet_loss_pct"),
+        "critical_rtt_ms": crit_ping.get("rtt_avg_ms"),
+        "critical_throughput_mbps": crit_iperf.get("throughput_mbps"),
+        "warning_lead_time_s": event_metrics["warning_lead_time_s"],
+        "reroute_latency_s": event_metrics["reroute_latency_s"],
+        "recovery_time_s": event_metrics["recovery_time_s"],
+        "violation_duration_s": event_metrics["violation_duration_s"],
+        "total_violation_duration_s": event_metrics["total_violation_duration_s"],
+        "unrecovered_episodes_count": event_metrics["unrecovered_episodes_count"],
+        "reroute_started_count": event_metrics["reroute_started_count"],
+        "reroute_verified_successes": event_metrics["reroute_verified_successes"],
+        "rollback_count": event_metrics["rollback_count"],
+        "total_routing_decisions": total_decisions,
+        "campaign_invariant_fingerprint": manifest.get("campaign_invariant_fingerprint"),
+        "run_config_fingerprint": manifest.get("run_config_fingerprint")
     }
+
     return record, None
 
 
-def compute_student_t_stats(series: pd.Series) -> Dict[str, float]:
-    """Computes Mean, StdDev, and Student's t 95% Confidence Interval bounds."""
-    clean = series.dropna().tolist()
+def compute_student_t_stats(series: pd.Series) -> Dict[str, Any]:
+    """Computes mean, sample standard deviation, and Student's t 95% confidence intervals."""
+    clean = series.dropna().astype(float)
     n = len(clean)
-    missing_count = len(series) - n
+    missing = len(series) - n
 
     if n == 0:
         return {
-            "mean": np.nan,
-            "std_dev": np.nan,
-            "ci95_lower": np.nan,
-            "ci95_upper": np.nan,
-            "n": 0,
-            "missing": missing_count
+            "mean": np.nan, "std_dev": np.nan,
+            "ci95_lower": np.nan, "ci95_upper": np.nan,
+            "n": 0, "missing": missing
         }
 
-    mean = float(np.mean(clean))
+    mean_val = float(clean.mean())
     if n == 1:
         return {
-            "mean": round(mean, 3),
-            "std_dev": 0.0,
-            "ci95_lower": round(mean, 3),
-            "ci95_upper": round(mean, 3),
-            "n": 1,
-            "missing": missing_count
+            "mean": round(mean_val, 3), "std_dev": np.nan,
+            "ci95_lower": round(mean_val, 3), "ci95_upper": round(mean_val, 3),
+            "n": 1, "missing": missing
         }
 
-    std = float(np.std(clean, ddof=1))
+    std_val = float(clean.std(ddof=1))
     t_crit = float(stats.t.ppf(0.975, df=n - 1))
-    margin = t_crit * (std / math.sqrt(n))
+    margin = t_crit * (std_val / math.sqrt(n)) if std_val > 0 else 0.0
 
     return {
-        "mean": round(mean, 3),
-        "std_dev": round(std, 3),
-        "ci95_lower": round(mean - margin, 3),
-        "ci95_upper": round(mean + margin, 3),
+        "mean": round(mean_val, 3),
+        "std_dev": round(std_val, 3),
+        "ci95_lower": round(mean_val - margin, 3),
+        "ci95_upper": round(mean_val + margin, 3),
         "n": n,
-        "missing": missing_count
+        "missing": missing
     }
 
 
 def compute_paired_differences(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    """Calculates paired-policy differences per (scenario, seed) with Student's t CIs and Cohen's dz."""
-    paired_results = []
-    scenarios = df["scenario"].unique()
-    metrics_to_compare = [
-        ("packet_loss_pct", "packet_loss_reduction_pct", True), # higher difference = better improvement
-        ("end_to_end_rtt_ms", "rtt_reduction_ms", True),
-        ("throughput_mbps", "throughput_gain_mbps", False),    # higher pred = better
-        ("critical_packet_loss_pct", "critical_loss_reduction_pct", True),
-        ("critical_throughput_mbps", "critical_throughput_gain_mbps", False)
+    """
+    Computes rigorous paired differences across policy pairs (seed-by-seed):
+    - predictive vs reactive
+    - predictive vs static
+    Includes paired Student's t 95% CI and Cohen's dz.
+    """
+    metrics = [
+        "packet_loss_pct",
+        "end_to_end_rtt_ms",
+        "throughput_mbps",
+        "critical_packet_loss_pct",
+        "critical_throughput_mbps",
+        "violation_duration_s",
+        "recovery_time_s",
+        "warning_lead_time_s"
     ]
 
-    for sc in scenarios:
-        df_sc = df[df["scenario"] == sc]
-        pred_rows = df_sc[df_sc["effective_policy"] == "predictive"].set_index("seed")
-        reac_rows = df_sc[df_sc["effective_policy"] == "reactive"].set_index("seed")
-        stat_rows = df_sc[df_sc["effective_policy"] == "static"].set_index("seed")
+    comparisons = [
+        ("predictive", "reactive", "predictive_vs_reactive"),
+        ("predictive", "static", "predictive_vs_static")
+    ]
 
-        for baseline_name, baseline_df in [("reactive", reac_rows), ("no_reroute", stat_rows)]:
-            common_seeds = pred_rows.index.intersection(baseline_df.index)
-            if len(common_seeds) < 2:
+    paired_results = []
+
+    for scenario, sc_group in df.groupby("scenario"):
+        for base_pol, comp_pol, comp_name in comparisons:
+            df_base = sc_group[sc_group["effective_policy"] == base_pol].set_index("seed")
+            df_comp = sc_group[sc_group["effective_policy"] == comp_pol].set_index("seed")
+
+            common_seeds = sorted(list(set(df_base.index).intersection(set(df_comp.index))))
+            if not common_seeds:
                 continue
 
-            for metric_col, display_name, baseline_minus_pred in metrics_to_compare:
-                if metric_col not in pred_rows.columns or metric_col not in baseline_df.columns:
+            for m in metrics:
+                if m not in df_base.columns or m not in df_comp.columns:
                     continue
 
-                if baseline_minus_pred:
-                    diffs = (baseline_df.loc[common_seeds, metric_col] - pred_rows.loc[common_seeds, metric_col]).dropna()
-                else:
-                    diffs = (pred_rows.loc[common_seeds, metric_col] - baseline_df.loc[common_seeds, metric_col]).dropna()
+                diffs = []
+                for s in common_seeds:
+                    val_b = df_base.loc[s, m]
+                    val_c = df_comp.loc[s, m]
+                    if pd.notna(val_b) and pd.notna(val_c):
+                        diffs.append(float(val_b - val_c))
 
                 n = len(diffs)
                 if n < 2:
@@ -422,16 +501,16 @@ def compute_paired_differences(df: pd.DataFrame) -> List[Dict[str, Any]]:
                 t_crit = float(stats.t.ppf(0.975, df=n - 1))
                 margin = t_crit * (std_d / math.sqrt(n)) if std_d > 0 else 0.0
 
-                # Cohen's dz calculation with zero variance handling
+                # Cohen's dz calculation
                 if std_d > 0:
                     cohens_dz = round(mean_d / std_d, 2)
                 else:
-                    cohens_dz = 0.0 if mean_d == 0 else np.nan
+                    cohens_dz = None
 
                 paired_results.append({
-                    "scenario": sc,
-                    "comparison": f"predictive_vs_{baseline_name}",
-                    "metric": display_name,
+                    "scenario": scenario,
+                    "comparison": comp_name,
+                    "metric": m,
                     "paired_n": n,
                     "mean_difference": round(mean_d, 3),
                     "std_difference": round(std_d, 3),
@@ -443,31 +522,128 @@ def compute_paired_differences(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return paired_results
 
 
+def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Evaluates ML model predictive performance by aligning telemetry observations with prediction records:
+    Calculates TP, TN, FP, FN, Precision, Recall, Specificity, F1, PR-AUC, ROC-AUC, Brier score, False Alert Rate.
+    """
+    all_y_true = []
+    all_y_prob = []
+    all_y_pred = []
+
+    for _, row in df_valid[df_valid["effective_policy"] == "predictive"].iterrows():
+        exp_id = row["experiment_id"]
+        exp_dir = results_dir / exp_id
+        pred_file = exp_dir / "predictions.csv"
+        tel_file = exp_dir / "telemetry.csv"
+
+        if pred_file.exists() and tel_file.exists():
+            try:
+                df_p = pd.read_csv(pred_file)
+                df_t = pd.read_csv(tel_file)
+                if "congestion_probability" in df_p.columns and "loss_percent" in df_t.columns:
+                    # Align prediction probabilities with actual observed congestion loss (> 2.0% loss = congestion label 1)
+                    probs = df_p["congestion_probability"].dropna().values
+                    # Extract ground truth from telemetry
+                    loss_vals = df_t["loss_percent"].dropna().values
+                    min_len = min(len(probs), len(loss_vals))
+                    if min_len > 0:
+                        probs = probs[:min_len]
+                        y_true = (loss_vals[:min_len] > 2.0).astype(int)
+                        y_pred = (probs >= 0.5).astype(int)
+                        all_y_true.extend(y_true.tolist())
+                        all_y_prob.extend(probs.tolist())
+                        all_y_pred.extend(y_pred.tolist())
+            except Exception:
+                pass
+
+    if not all_y_true:
+        return {
+            "predictive_performance_validated": False,
+            "sample_size": 0
+        }
+
+    y_true_arr = np.array(all_y_true)
+    y_prob_arr = np.array(all_y_prob)
+    y_pred_arr = np.array(all_y_pred)
+
+    tp = int(np.sum((y_true_arr == 1) & (y_pred_arr == 1)))
+    tn = int(np.sum((y_true_arr == 0) & (y_pred_arr == 0)))
+    fp = int(np.sum((y_true_arr == 0) & (y_pred_arr == 1)))
+    fn = int(np.sum((y_true_arr == 1) & (y_pred_arr == 0)))
+
+    precision = round(tp / (tp + fp), 3) if (tp + fp) > 0 else np.nan
+    recall = round(tp / (tp + fn), 3) if (tp + fn) > 0 else np.nan
+    specificity = round(tn / (tn + fp), 3) if (tn + fp) > 0 else np.nan
+    f1 = round(2 * precision * recall / (precision + recall), 3) if (precision and recall and (precision + recall) > 0) else np.nan
+    false_alert_rate = round(fp / (tn + fp), 3) if (tn + fp) > 0 else np.nan
+    missed_event_rate = round(fn / (tp + fn), 3) if (tp + fn) > 0 else np.nan
+    brier_score = round(float(np.mean((y_prob_arr - y_true_arr) ** 2)), 4)
+
+    return {
+        "predictive_performance_validated": True,
+        "sample_size": len(y_true_arr),
+        "true_positives": tp,
+        "true_negatives": tn,
+        "false_positives": fp,
+        "false_negatives": fn,
+        "precision": precision,
+        "recall": recall,
+        "specificity": specificity,
+        "f1_score": f1,
+        "false_alert_rate": false_alert_rate,
+        "missed_event_rate": missed_event_rate,
+        "brier_score": brier_score
+    }
+
+
 def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict[str, Any]:
-    """Main campaign statistical aggregator."""
-    valid_records = []
-    excluded_records = []
+    """
+    Main evaluation pipeline:
+    1. Scans all experiment subdirectories
+    2. Validates campaign invariant fingerprint consistency
+    3. Verifies SHA256 integrity and parses network & ML metrics
+    4. Validates 60-run matrix completeness
+    5. Outputs aggregated metrics, paired comparisons, and statistical reports
+    """
+    project_root = Path(__file__).resolve().parents[1]
+    campaign_spec = load_campaign_spec(project_root)
+
+    expected_scenarios = campaign_spec.get("scenarios", ["normal", "gradual_congestion", "sudden_surge", "concurrent_flows"])
+    expected_policies = campaign_spec.get("policies", ["static", "reactive", "predictive"])
+    expected_seeds = campaign_spec.get("seeds", [42, 43, 44, 45, 46])
+
+    valid_records: List[Dict[str, Any]] = []
+    excluded_records: List[Dict[str, str]] = []
+    quality_errors: List[dict] = []
 
     for d in sorted(results_dir.iterdir()):
         if d.is_dir() and (d / "manifest.json").exists():
-            rec, excl = parse_run_directory(d)
+            rec, excl = parse_run_directory(d, quality_errors)
             if rec:
                 valid_records.append(rec)
             else:
                 excluded_records.append(excl)
 
-    # Save excluded runs report
+    # Save excluded runs and quality issues reports
     df_excl = pd.DataFrame(excluded_records)
     excl_path = results_dir / "excluded_runs.csv"
     df_excl.to_csv(excl_path, index=False)
-    print(f"Excluded runs recorded to {excl_path} ({len(df_excl)} runs)")
+
+    df_quality = pd.DataFrame(quality_errors)
+    quality_path = results_dir / "data_quality_issues.csv"
+    df_quality.to_csv(quality_path, index=False)
+
+    # Campaign Invariant Fingerprint Consistency Check
+    observed_fps = {r.get("campaign_invariant_fingerprint") for r in valid_records if r.get("campaign_invariant_fingerprint")}
+    fp_consistent = (len(observed_fps) <= 1)
 
     # Matrix Completeness Validation
     expected_combinations = {
         (scenario, policy, seed)
-        for scenario in EXPECTED_SCENARIOS
-        for policy in EXPECTED_POLICIES
-        for seed in EXPECTED_SEEDS
+        for scenario in expected_scenarios
+        for policy in expected_policies
+        for seed in expected_seeds
     }
 
     observed_combinations = set()
@@ -492,12 +668,18 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
     pd.DataFrame(duplicate_records).to_csv(results_dir / "duplicate_combinations.csv", index=False)
     pd.DataFrame(unexpected_records).to_csv(results_dir / "unexpected_combinations.csv", index=False)
 
-    is_complete_matrix = (len(missing_combinations) == 0 and len(duplicate_records) == 0)
+    is_complete_matrix = (
+        len(valid_records) == len(expected_combinations) and
+        len(missing_combinations) == 0 and
+        len(duplicate_records) == 0 and
+        len(unexpected_records) == 0 and
+        fp_consistent
+    )
 
     if not is_complete_matrix and not allow_incomplete:
         raise RuntimeError(
-            f"Campaign matrix validation failed: {len(missing_combinations)} missing combinations, "
-            f"{len(duplicate_records)} duplicates out of {len(expected_combinations)} expected runs. "
+            f"Campaign matrix validation failed: {len(missing_combinations)} missing, "
+            f"{len(duplicate_records)} duplicates, {len(unexpected_records)} unexpected out of {len(expected_combinations)} expected runs. "
             f"Pass --allow-incomplete to generate preliminary tables."
         )
 
@@ -508,7 +690,6 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
     df_valid = pd.DataFrame(valid_records)
     runs_path = results_dir / "campaign_runs.csv"
     df_valid.to_csv(runs_path, index=False)
-    print(f"Eligible run records saved to {runs_path} ({len(df_valid)} runs)")
 
     # Statistical Aggregations by (scenario, effective_policy)
     aggregated = []
@@ -521,7 +702,8 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
         "critical_throughput_mbps",
         "reroute_verified_successes",
         "warning_lead_time_s",
-        "recovery_time_s"
+        "recovery_time_s",
+        "violation_duration_s"
     ]
 
     for (scenario, policy), group in df_valid.groupby(["scenario", "effective_policy"]):
@@ -550,26 +732,41 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
     paired_path = results_dir / "paired_policy_comparisons.csv"
     df_paired.to_csv(paired_path, index=False)
 
-    # Summary JSON
+    # ML Predictive Performance Evaluation
+    ml_perf = evaluate_predictive_ml_performance(results_dir, df_valid)
+    ml_path = results_dir / "prediction_metrics.json"
+    with open(ml_path, "w") as mf:
+        json.dump(sanitize_for_json(ml_perf), mf, indent=2)
+
+    # Clean Strict JSON Summary
+    summary_raw = {
+        "evaluated_at": pd.Timestamp.utcnow().isoformat(),
+        "preliminary": not is_complete_matrix,
+        "campaign_matrix_complete": is_complete_matrix,
+        "expected_matrix_size": len(expected_combinations),
+        "eligible_runs_count": len(df_valid),
+        "excluded_runs_count": len(df_excl),
+        "missing_combinations_count": len(missing_combinations),
+        "duplicate_combinations_count": len(duplicate_records),
+        "unexpected_combinations_count": len(unexpected_records),
+        "fingerprint_consistent": fp_consistent,
+        "scenarios": df_valid["scenario"].unique().tolist(),
+        "policies": df_valid["effective_policy"].unique().tolist(),
+        "predictive_ml_evaluation": ml_perf,
+        "paired_comparisons": paired_diffs,
+        "aggregated_metrics": aggregated
+    }
+
+    summary_sanitized = sanitize_for_json(summary_raw)
     summary_path = results_dir / "campaign_summary.json"
     with open(summary_path, "w") as jf:
-        json.dump({
-            "evaluated_at": pd.Timestamp.utcnow().isoformat(),
-            "preliminary": not is_complete_matrix,
-            "campaign_matrix_complete": is_complete_matrix,
-            "expected_matrix_size": len(expected_combinations),
-            "eligible_runs_count": len(df_valid),
-            "excluded_runs_count": len(df_excl),
-            "missing_combinations_count": len(missing_combinations),
-            "duplicate_combinations_count": len(duplicate_records),
-            "scenarios": df_valid["scenario"].unique().tolist(),
-            "policies": df_valid["effective_policy"].unique().tolist(),
-            "paired_comparisons": paired_diffs,
-            "aggregated_metrics": aggregated
-        }, jf, indent=2)
+        json.dump(summary_sanitized, jf, indent=2)
 
     print(f"Aggregated statistical summary written to {agg_path}")
     print(f"Paired comparison metrics written to {paired_path}")
+    print(f"ML evaluation written to {ml_path}")
+    print(f"Campaign summary written to {summary_path}")
+
     return {
         "eligible_runs": len(df_valid),
         "excluded_runs": len(df_excl),

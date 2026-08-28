@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+import json
 import os
 import sys
 import time
@@ -28,6 +27,15 @@ def run_normal():
 
     rng = random.Random(seed)
     bw_mbps = round(rng.uniform(1.8, 2.2), 2)
+
+    scenario_params = {
+        "scenario": "normal",
+        "seed": seed,
+        "policy": policy,
+        "bandwidth_mbps": bw_mbps
+    }
+    with open(results_dir / "scenario_parameters.json", "w") as pf:
+        json.dump(scenario_params, pf, indent=2)
 
     record_policy(policy, exp_id)
     info(f'*** Starting Normal Scenario (Seed: {seed}, Policy: {policy}, Target BW: {bw_mbps}Mbps)\n')

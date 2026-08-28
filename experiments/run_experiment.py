@@ -38,6 +38,8 @@ if str(project_root_dir) not in sys.path:
     sys.path.append(str(project_root_dir))
 
 from network.routing.policies import normalize_policy, get_scientific_label
+from experiments.evidence_collector import merge_and_sort_events
+from experiments.artifact_validator import validate_finalized_artifacts, compute_campaign_invariant_fingerprint, compute_run_config_fingerprint
 
 
 EXIT_CODES = {
@@ -253,8 +255,12 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                 if not ryu_log.closed:
                     ryu_log.close()
 
-    # Validate non-empty and schema-valid finalization artifacts
-    if policy_sync_info.get("successful") and status in {"completed", "fixture_generated"}:
+    # 1. Merge cross-process events into unified events.jsonl
+    merge_and_sort_events(results_dir)
+
+    # 2. Trigger backend finalization callback if sync is active
+    callback_successful = False
+    if policy_sync_info.get("successful") and status in {"completed", "fixture_generated", "stopped"}:
         finalization_info["attempted"] = True
         try:
             import urllib.request
@@ -268,32 +274,33 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
             )
             with urllib.request.urlopen(fin_req, timeout=2) as resp:
                 if resp.status == 200:
-                    finalization_info["successful"] = True
+                    callback_successful = True
                     print("Backend telemetry and decision records finalized to run directory.")
         except Exception as e:
             print(f"Notice: Finalization callback error: {e}")
-            finalization_info["successful"] = False
+            callback_successful = False
 
-        # Validate that required finalization artifacts are present and non-empty with valid data
-        tel_file = results_dir / "telemetry.csv"
-        pred_file = results_dir / "predictions.csv"
-        dec_file = results_dir / "routing_decisions.jsonl"
+    # 3. Centralized validation of all finalized artifacts
+    artifacts_valid, val_report, val_errors = validate_finalized_artifacts(results_dir, effective_policy, mode)
 
-        valid_tel = tel_file.exists() and tel_file.stat().st_size > 0
-        valid_pred = pred_file.exists() and pred_file.stat().st_size > 0
-        valid_dec = dec_file.exists() # JSONL file can be 0 bytes if no reroutes occurred, but must exist
+    finalization_successful = (
+        (not require_sync or callback_successful) and
+        artifacts_valid
+    )
 
-        if valid_tel:
-            lines = [l for l in tel_file.read_text().splitlines() if l.strip()]
-            valid_tel = len(lines) >= 2 # Header + at least 1 record
+    finalization_info.update({
+        "callback_successful": callback_successful,
+        "artifacts_valid": artifacts_valid,
+        "successful": finalization_successful,
+        "telemetry_rows": val_report["telemetry_rows"],
+        "prediction_rows": val_report["prediction_rows"],
+        "routing_decision_rows": val_report["routing_decision_rows"],
+        "event_rows": val_report["event_rows"],
+        "validation_errors": val_errors
+    })
 
-        if valid_pred and effective_policy == "predictive":
-            lines = [l for l in pred_file.read_text().splitlines() if l.strip()]
-            valid_pred = len(lines) >= 2
-
-        if not (valid_tel and valid_pred and valid_dec):
-            if status == "completed":
-                status = "backend_finalization_failed"
+    if status == "completed" and not finalization_successful and require_sync:
+        status = "backend_finalization_failed"
 
     # Check evidence report if present
     ev_report_path = results_dir / "evidence_report.json"
@@ -326,10 +333,18 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         (not finalization_info.get("required") or finalization_info.get("successful", False))
     )
 
-    # Compute exact campaign configuration fingerprint
-    git_rev = get_git_commit(project_root)
-    config_fingerprint_str = f"git:{git_rev}|scenario:{scenario}|policy:{effective_policy}|seed:{seed}|duration:{duration}"
-    config_fingerprint = hashlib.sha256(config_fingerprint_str.encode('utf-8')).hexdigest()
+    # Compute campaign invariant fingerprint and run configuration fingerprint
+    from experiments.artifact_validator import compute_campaign_invariant_fingerprint, compute_run_config_fingerprint
+    invariant_fp = compute_campaign_invariant_fingerprint(project_root)
+
+    scenario_params_file = results_dir / "scenario_parameters.json"
+    scenario_params = {}
+    if scenario_params_file.exists():
+        try:
+            scenario_params = json.loads(scenario_params_file.read_text())
+        except Exception:
+            pass
+    run_fp = compute_run_config_fingerprint(scenario, effective_policy, seed, duration, scenario_params)
 
     manifest = {
         "experiment_id": experiment_id,
@@ -350,11 +365,15 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         "predictive_performance_validated": False,
         "evidence_complete": evidence_complete if is_real else True,
         "eligible_for_analysis": eligible_for_analysis,
-        "campaign_config_fingerprint": config_fingerprint,
+        "partial_evidence": (status == "stopped" or status == "completed_with_missing_evidence"),
+        "campaign_invariant_fingerprint": invariant_fp["fingerprint"],
+        "campaign_invariant_components": invariant_fp["components"],
+        "run_config_fingerprint": run_fp,
+        "scenario_parameters": scenario_params,
         "metadata": {
             "start_time": start_time,
             "end_time": end_time,
-            "git_commit": git_rev,
+            "git_commit": invariant_fp["components"]["git_commit"],
             "python_version": get_python_version(),
             "dependencies": get_dependencies()
         }

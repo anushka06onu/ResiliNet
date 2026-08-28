@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+import json
 import os
 import sys
 import time
@@ -29,6 +28,17 @@ def run_sudden_surge():
     rng = random.Random(seed)
     base_bw = round(rng.uniform(1.8, 2.2), 2)
     surge_bw = round(rng.uniform(18.0, 22.0), 1)
+
+    scenario_params = {
+        "scenario": "sudden_surge",
+        "seed": seed,
+        "policy": policy,
+        "base_bw_mbps": base_bw,
+        "surge_bw_mbps": surge_bw,
+        "surge_start_s": duration // 2
+    }
+    with open(results_dir / "scenario_parameters.json", "w") as pf:
+        json.dump(scenario_params, pf, indent=2)
 
     record_policy(policy, exp_id)
     info(f'*** Starting Sudden Surge Scenario (Seed: {seed}, Policy: {policy}, Base: {base_bw}M, Surge: {surge_bw}M)\n')
@@ -63,11 +73,11 @@ def run_sudden_surge():
         pid_str = h2.cmd(f'iperf -c {h4.IP()} -u -b {surge_bw}M -t {duration // 2} > {traffic_dir}/iperf_surge_client.log 2>&1 & echo $!').strip()
         time.sleep(1) # Allow process startup
 
-        # Verify exact surge process is active on h2
+        # Verify exact surge process is active on h2 via exit code 0
         is_running = False
         if pid_str.isdigit():
-            kill_check = h2.cmd(f'kill -0 {pid_str}')
-            if not kill_check.strip() or ("no such" not in kill_check.lower()):
+            exit_code = h2.cmd(f'kill -0 {pid_str} >/dev/null 2>&1; echo $?').strip()
+            if exit_code == "0":
                 is_running = True
 
         if not is_running:

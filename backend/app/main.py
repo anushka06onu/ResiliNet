@@ -728,6 +728,14 @@ def internal_configure_experiment(id: str, req: ExperimentConfigureRequest):
     if not re.fullmatch(r"[A-Za-z0-9_-]+", id):
         raise HTTPException(status_code=422, detail="Invalid experiment ID")
     with experiment_lock:
+        active_ids = [
+            eid
+            for eid, process in experiment_manager.active_processes.items()
+            if process.poll() is None
+        ]
+        if active_ids and id not in active_ids:
+            raise HTTPException(status_code=409, detail=f"Cannot configure: another experiment is active ({active_ids[0]})")
+
         orchestrator.begin_experiment(id, req.policy)
     return {
         "experiment_id": id,
@@ -749,14 +757,37 @@ def internal_finalize_experiment(id: str):
     import pandas as pd
 
     with experiment_lock:
+        # 1. Always create telemetry.csv
+        tel_cols = ["timestamp", "experiment_id", "switch_id", "port_no", "rx_bytes", "tx_bytes", "control_plane_rtt_ms", "tx_dropped", "loss_percent", "utilization"]
         if telemetry_history:
-            pd.DataFrame(telemetry_history).to_csv(run_dir / "telemetry.csv", index=False)
+            df_tel = pd.DataFrame(telemetry_history)
+        else:
+            df_tel = pd.DataFrame(columns=tel_cols)
+        df_tel.to_csv(run_dir / "telemetry.csv", index=False)
+        tel_rows = len(df_tel)
+
+        # 2. Always create predictions.csv
+        pred_cols = ["timestamp", "link_id", "congestion_probability", "is_violation_predicted"]
         if prediction_history:
-            pd.DataFrame(prediction_history).to_csv(run_dir / "predictions.csv", index=False)
-        if orchestrator.routing_decisions:
-            with open(run_dir / "routing_decisions.jsonl", "w") as f:
-                f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
-    return {"status": "FINALIZED", "experiment_id": id}
+            df_pred = pd.DataFrame(prediction_history)
+        else:
+            df_pred = pd.DataFrame(columns=pred_cols)
+        df_pred.to_csv(run_dir / "predictions.csv", index=False)
+        pred_rows = len(df_pred)
+
+        # 3. Always create routing_decisions.jsonl
+        with open(run_dir / "routing_decisions.jsonl", "w") as f:
+            for decision in orchestrator.routing_decisions:
+                f.write(json.dumps(decision) + "\n")
+        dec_rows = len(orchestrator.routing_decisions)
+
+    return {
+        "status": "FINALIZED",
+        "experiment_id": id,
+        "telemetry_rows": tel_rows,
+        "prediction_rows": pred_rows,
+        "routing_decision_rows": dec_rows
+    }
 
 @app.post("/api/v1/experiments/{id}/start")
 def start_experiment(id: str, config: ExperimentConfig = None):
