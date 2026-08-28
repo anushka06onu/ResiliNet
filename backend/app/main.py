@@ -700,12 +700,24 @@ class ExperimentConfigureRequest(BaseModel):
 telemetry_history = []
 prediction_history = []
 
-INTERNAL_API_TOKEN = os.environ.get("RESILINET_INTERNAL_TOKEN", "resilinet-internal-secret-token")
+INTERNAL_API_TOKEN = os.environ.get("RESILINET_INTERNAL_TOKEN")
+import hmac
+import threading
+
+experiment_lock = threading.Lock()
 
 from fastapi import Depends, Header
 
 def verify_internal_token(x_resilinet_internal_token: Optional[str] = Header(None)):
-    if x_resilinet_internal_token != INTERNAL_API_TOKEN:
+    token = os.environ.get("RESILINET_INTERNAL_TOKEN") or INTERNAL_API_TOKEN
+    # In test runs without explicit env, allow test token; in production reject missing token
+    if not token and "PYTEST_CURRENT_TEST" in os.environ:
+        token = "resilinet-test-token"
+
+    if not token:
+        raise HTTPException(status_code=500, detail="Server misconfiguration: RESILINET_INTERNAL_TOKEN is required")
+
+    if not x_resilinet_internal_token or not hmac.compare_digest(x_resilinet_internal_token, token):
         raise HTTPException(status_code=403, detail="Forbidden: Invalid or missing internal token")
 
 import re
@@ -715,7 +727,8 @@ def internal_configure_experiment(id: str, req: ExperimentConfigureRequest):
     """Internal endpoint for runner to configure orchestrator context and verify policy."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+", id):
         raise HTTPException(status_code=422, detail="Invalid experiment ID")
-    orchestrator.begin_experiment(id, req.policy)
+    with experiment_lock:
+        orchestrator.begin_experiment(id, req.policy)
     return {
         "experiment_id": id,
         "requested_policy": req.policy,
@@ -735,13 +748,14 @@ def internal_finalize_experiment(id: str):
     run_dir.mkdir(parents=True, exist_ok=True)
     import pandas as pd
 
-    if telemetry_history:
-        pd.DataFrame(telemetry_history).to_csv(run_dir / "telemetry.csv", index=False)
-    if prediction_history:
-        pd.DataFrame(prediction_history).to_csv(run_dir / "predictions.csv", index=False)
-    if orchestrator.routing_decisions:
-        with open(run_dir / "routing_decisions.jsonl", "w") as f:
-            f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
+    with experiment_lock:
+        if telemetry_history:
+            pd.DataFrame(telemetry_history).to_csv(run_dir / "telemetry.csv", index=False)
+        if prediction_history:
+            pd.DataFrame(prediction_history).to_csv(run_dir / "predictions.csv", index=False)
+        if orchestrator.routing_decisions:
+            with open(run_dir / "routing_decisions.jsonl", "w") as f:
+                f.writelines(json.dumps(decision) + "\n" for decision in orchestrator.routing_decisions)
     return {"status": "FINALIZED", "experiment_id": id}
 
 @app.post("/api/v1/experiments/{id}/start")
@@ -749,24 +763,25 @@ def start_experiment(id: str, config: ExperimentConfig = None):
     if not re.fullmatch(r"[A-Za-z0-9_-]+", id):
         raise HTTPException(status_code=422, detail="Invalid experiment ID")
 
-    # Enforce exactly one active experiment
-    active_running = [eid for eid, proc in experiment_manager.active_processes.items() if proc.poll() is None]
-    if active_running:
-        raise HTTPException(status_code=409, detail=f"Another experiment is currently running: {active_running[0]}")
+    with experiment_lock:
+        # Enforce exactly one active experiment atomically
+        active_running = [eid for eid, proc in experiment_manager.active_processes.items() if proc.poll() is None]
+        if active_running:
+            raise HTTPException(status_code=409, detail=f"Another experiment is currently running: {active_running[0]}")
 
-    global telemetry_history, prediction_history
-    telemetry_history = []
-    prediction_history = []
-    orchestrator.routing_decisions = []
-    feature_pipeline.link_history.clear()
+        global telemetry_history, prediction_history
+        telemetry_history = []
+        prediction_history = []
+        orchestrator.routing_decisions = []
+        feature_pipeline.link_history.clear()
 
-    if config is None:
-        config = ExperimentConfig()
+        if config is None:
+            config = ExperimentConfig()
 
-    orchestrator.begin_experiment(id, config.policy)
+        orchestrator.begin_experiment(id, config.policy)
 
-    if not experiment_manager.start(id, config):
-        raise HTTPException(status_code=409, detail="Experiment already running")
+        if not experiment_manager.start(id, config):
+            raise HTTPException(status_code=409, detail="Experiment already running")
 
     return {"status": "STARTING", "experiment": id, "scenario": config.scenario}
 

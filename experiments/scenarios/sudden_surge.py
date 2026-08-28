@@ -59,18 +59,22 @@ def run_sudden_surge():
         time.sleep(duration // 2)
 
         info(f'*** Injecting sudden surge ({surge_bw}M from h2)...\n')
-        # Sudden surge: start massive traffic from h2 to h4
-        h2.cmd(f'iperf -c {h4.IP()} -u -b {surge_bw}M -t {duration // 2} > {traffic_dir}/iperf_surge_client.log &')
+        # Sudden surge: start massive traffic from h2 to h4 and capture PID
+        pid_str = h2.cmd(f'iperf -c {h4.IP()} -u -b {surge_bw}M -t {duration // 2} > {traffic_dir}/iperf_surge_client.log 2>&1 & echo $!').strip()
         time.sleep(1) # Allow process startup
 
-        # Verify surge process is active on h2
-        check_ps = h2.cmd('ps aux | grep "iperf -c" | grep -v grep')
-        surge_active = (f"-b {surge_bw}M" in check_ps) or (len(check_ps.strip()) > 0)
-        if not surge_active:
-            log_experiment_event(results_dir, "congestion_injection_failed", {"surge_bw_mbps": surge_bw, "ps_output": check_ps})
-            raise RuntimeError(f"Sudden surge iperf process failed to start on h2: {check_ps}")
+        # Verify exact surge process is active on h2
+        is_running = False
+        if pid_str.isdigit():
+            kill_check = h2.cmd(f'kill -0 {pid_str}')
+            if not kill_check.strip() or ("no such" not in kill_check.lower()):
+                is_running = True
 
-        log_experiment_event(results_dir, "congestion_injected_at", {"surge_bw_mbps": surge_bw, "src": h2.IP(), "dst": h4.IP(), "verified": True})
+        if not is_running:
+            log_experiment_event(results_dir, "congestion_injection_failed", {"surge_bw_mbps": surge_bw, "pid": pid_str})
+            raise RuntimeError(f"Sudden surge iperf process (PID {pid_str}) failed to start on h2")
+
+        log_experiment_event(results_dir, "congestion_injected_at", {"surge_bw_mbps": surge_bw, "src": h2.IP(), "dst": h4.IP(), "pid": int(pid_str), "verified": True})
 
         time.sleep(max(1, duration - (duration // 2) - 1))
 

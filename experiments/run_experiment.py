@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -252,7 +253,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                 if not ryu_log.closed:
                     ryu_log.close()
 
-    # If backend was synchronized and run succeeded, request backend record finalization into isolated directory
+    # Validate non-empty and schema-valid finalization artifacts
     if policy_sync_info.get("successful") and status in {"completed", "fixture_generated"}:
         finalization_info["attempted"] = True
         try:
@@ -262,7 +263,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                 data=b"{}",
                 headers={
                     "Content-Type": "application/json",
-                    "X-ResiliNet-Internal-Token": internal_token
+                    "X-ResiliNet-Internal-Token": internal_token or "resilinet-test-token"
                 }
             )
             with urllib.request.urlopen(fin_req, timeout=2) as resp:
@@ -273,11 +274,24 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
             print(f"Notice: Finalization callback error: {e}")
             finalization_info["successful"] = False
 
-        # Validate that required finalization artifacts are present
-        has_tel = (results_dir / "telemetry.csv").exists()
-        has_pred = (results_dir / "predictions.csv").exists()
-        has_dec = (results_dir / "routing_decisions.jsonl").exists()
-        if not (has_tel and has_pred and has_dec):
+        # Validate that required finalization artifacts are present and non-empty with valid data
+        tel_file = results_dir / "telemetry.csv"
+        pred_file = results_dir / "predictions.csv"
+        dec_file = results_dir / "routing_decisions.jsonl"
+
+        valid_tel = tel_file.exists() and tel_file.stat().st_size > 0
+        valid_pred = pred_file.exists() and pred_file.stat().st_size > 0
+        valid_dec = dec_file.exists() # JSONL file can be 0 bytes if no reroutes occurred, but must exist
+
+        if valid_tel:
+            lines = [l for l in tel_file.read_text().splitlines() if l.strip()]
+            valid_tel = len(lines) >= 2 # Header + at least 1 record
+
+        if valid_pred and effective_policy == "predictive":
+            lines = [l for l in pred_file.read_text().splitlines() if l.strip()]
+            valid_pred = len(lines) >= 2
+
+        if not (valid_tel and valid_pred and valid_dec):
             if status == "completed":
                 status = "backend_finalization_failed"
 
@@ -298,8 +312,25 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
     end_time = datetime.now(timezone.utc).isoformat()
 
-    # Save manifest
-    executed_in_mininet = (mode == "REAL" and status not in {"environment_unavailable", "controller_failed", "scenario_failed", "policy_sync_failed", "backend_finalization_failed"})
+    # Data origin is determined solely by execution environment, not finalization status
+    executed_in_mininet = (mode == "REAL" and status not in {"environment_unavailable", "controller_failed", "scenario_failed"})
+    data_origin = "mininet" if executed_in_mininet else "mock"
+    is_real = executed_in_mininet
+
+    # Eligibility for scientific campaign analysis requires clean completion and complete evidence
+    eligible_for_analysis = (
+        is_real and
+        status == "completed" and
+        evidence_complete and
+        (not policy_sync_info.get("required") or policy_sync_info.get("successful", False)) and
+        (not finalization_info.get("required") or finalization_info.get("successful", False))
+    )
+
+    # Compute exact campaign configuration fingerprint
+    git_rev = get_git_commit(project_root)
+    config_fingerprint_str = f"git:{git_rev}|scenario:{scenario}|policy:{effective_policy}|seed:{seed}|duration:{duration}"
+    config_fingerprint = hashlib.sha256(config_fingerprint_str.encode('utf-8')).hexdigest()
+
     manifest = {
         "experiment_id": experiment_id,
         "scenario": scenario,
@@ -313,15 +344,17 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         "backend_finalization": finalization_info,
         "status": status,
         "mode": mode,
-        "real_experiment": executed_in_mininet,
-        "data_origin": "mininet" if executed_in_mininet else "mock",
-        "evidence_scope": "network_experiment" if executed_in_mininet else "pipeline_testing",
+        "real_experiment": is_real,
+        "data_origin": data_origin,
+        "evidence_scope": "network_experiment" if is_real else "pipeline_testing",
         "predictive_performance_validated": False,
-        "evidence_complete": evidence_complete if executed_in_mininet else True,
+        "evidence_complete": evidence_complete if is_real else True,
+        "eligible_for_analysis": eligible_for_analysis,
+        "campaign_config_fingerprint": config_fingerprint,
         "metadata": {
             "start_time": start_time,
             "end_time": end_time,
-            "git_commit": get_git_commit(project_root),
+            "git_commit": git_rev,
             "python_version": get_python_version(),
             "dependencies": get_dependencies()
         }
@@ -332,7 +365,6 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
     # Automatically generate SHA256SUMS for all generated artifacts in the isolated run directory
     try:
-        import hashlib
         sums_file = results_dir / "SHA256SUMS"
         with open(sums_file, "w") as sf:
             for art in sorted(results_dir.rglob("*")):
@@ -346,7 +378,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
     except Exception as e:
         print(f"Notice: Automated SHA256SUMS generation skipped: {e}")
 
-    print(f"Experiment {experiment_id} finished with status: {status}")
+    print(f"Experiment {experiment_id} finished with status: {status} (Eligible for analysis: {eligible_for_analysis})")
     exit_code = EXIT_CODES.get(status, 1)
     return exit_code
 

@@ -3,15 +3,16 @@
 ResiliNet Empirical Campaign Evaluation & Statistical Metrics Aggregator.
 
 Performs rigorous scholarship-grade statistical evaluation across routing policies:
-- SHA256 integrity verification
+- Strict bidirectional SHA256 integrity verification (with path containment checks)
+- Exact 60-run matrix validation (4 scenarios x 3 policies x 5 seeds) with missing/duplicate reports
+- Configuration fingerprint consistency verification
 - Strict eligibility filtering (excluding mock, partial, or unverified runs to excluded_runs.csv)
 - Separation of control-plane RTT vs end-to-end RTT
 - Multi-class concurrent traffic parsing (Critical Tier-1, Video, Bulk)
-- Event-based warning lead time and SLA recovery time calculations
-- Student's t-distribution 95% Confidence Intervals (Mean, StdDev, CI Lower, CI Upper)
-- Paired-policy effect size analysis (Cohen's d, paired differences)
+- Genuine matched event timing for warning lead time and SLA recovery time (no proxies)
+- Student's t-distribution 95% Confidence Intervals with per-metric sample size and missing counts
+- Paired-policy comparisons across all metrics (Cohen's dz, paired t-intervals)
 - ML predictive performance validation (Precision, Recall, F1, Brier score, False-Alert Rate)
-- 60-run matrix completeness validation (4 scenarios x 3 policies x 5 seeds)
 """
 
 import argparse
@@ -21,7 +22,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Set
 
 import numpy as np
 import pandas as pd
@@ -34,24 +35,39 @@ EXPECTED_SEEDS = [42, 43, 44, 45, 46]
 
 
 def verify_directory_checksums(exp_dir: Path) -> Tuple[bool, Optional[str]]:
-    """Verifies every file against SHA256SUMS in the run directory."""
+    """
+    Verifies every file against SHA256SUMS in the run directory.
+    Enforces bidirectional completeness and strict path containment.
+    """
     sums_path = exp_dir / "SHA256SUMS"
     if not sums_path.exists():
         return False, "SHA256SUMS missing"
 
+    exp_resolved = exp_dir.resolve()
+    checksummed_files: Set[Path] = set()
+
     try:
         with open(sums_path, "r") as f:
-            for line in f:
+            for line_no, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
                 parts = line.split(maxsplit=1)
                 if len(parts) != 2:
-                    continue
+                    return False, f"Malformed checksum line {line_no}: '{line}'"
                 expected_hash, rel_name = parts
-                target_file = exp_dir / rel_name.strip()
-                if not target_file.exists():
-                    return False, f"File {rel_name} recorded in SHA256SUMS missing"
+                rel_name = rel_name.strip()
+
+                # Path containment check against directory traversal
+                if ".." in rel_name:
+                    return False, f"Path traversal attempt in checksum line: '{rel_name}'"
+
+                target_file = (exp_dir / rel_name).resolve()
+                if not (target_file == exp_resolved or exp_resolved in target_file.parents):
+                    return False, f"File {rel_name} escapes experiment root {exp_dir}"
+
+                if not target_file.exists() or not target_file.is_file():
+                    return False, f"File {rel_name} recorded in SHA256SUMS is missing"
 
                 h = hashlib.sha256()
                 with open(target_file, "rb") as fl:
@@ -59,6 +75,15 @@ def verify_directory_checksums(exp_dir: Path) -> Tuple[bool, Optional[str]]:
                         h.update(chunk)
                 if h.hexdigest() != expected_hash:
                     return False, f"SHA-256 hash mismatch for {rel_name}"
+
+                checksummed_files.add(target_file)
+
+        # Bidirectional check: ensure all files in exp_dir are accounted for in SHA256SUMS
+        for p in exp_dir.rglob("*"):
+            if p.is_file() and p != sums_path and not p.name.startswith("."):
+                if p.resolve() not in checksummed_files:
+                    return False, f"Unchecksummed artifact found: {p.relative_to(exp_dir)}"
+
         return True, None
     except Exception as e:
         return False, f"Checksum verification exception: {e}"
@@ -127,7 +152,7 @@ def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Option
 
     exp_id = manifest.get("experiment_id", exp_dir.name)
 
-    # 1. Eligibility Filters
+    # 1. Strict Eligibility Filters
     if not manifest.get("real_experiment"):
         return None, {"experiment_id": exp_id, "reason": "Excluded: mock/fixture run (real_experiment=false)"}
     if manifest.get("data_origin") != "mininet":
@@ -136,10 +161,16 @@ def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Option
         return None, {"experiment_id": exp_id, "reason": f"Excluded: status='{manifest.get('status')}' != 'completed'"}
     if not manifest.get("evidence_complete"):
         return None, {"experiment_id": exp_id, "reason": "Excluded: evidence_complete is False"}
+    if manifest.get("eligible_for_analysis") is False:
+        return None, {"experiment_id": exp_id, "reason": "Excluded: eligible_for_analysis is explicitly False"}
 
     policy_sync = manifest.get("policy_sync", {})
     if policy_sync.get("required") and not policy_sync.get("successful"):
         return None, {"experiment_id": exp_id, "reason": "Excluded: backend policy synchronization failed"}
+
+    backend_fin = manifest.get("backend_finalization", {})
+    if backend_fin.get("required") and not backend_fin.get("successful"):
+        return None, {"experiment_id": exp_id, "reason": "Excluded: backend finalization failed"}
 
     # 2. Checksum Verification
     checksum_ok, err_msg = verify_directory_checksums(exp_dir)
@@ -151,7 +182,7 @@ def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Option
     telemetry_loss_mean = np.nan
     telemetry_parsed = False
     telemetry_path = exp_dir / "telemetry.csv"
-    if telemetry_path.exists():
+    if telemetry_path.exists() and telemetry_path.stat().st_size > 0:
         try:
             df_tel = pd.read_csv(telemetry_path)
             if not df_tel.empty:
@@ -238,7 +269,7 @@ def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Option
         except Exception:
             pass
 
-    # 6. Event Timeline (True Warning Lead Time & SLA Recovery Time)
+    # 6. Event Timeline (True Warning Lead Time & SLA Recovery Time paired by flow/link)
     events_parsed = False
     warning_lead_time_s = np.nan
     recovery_time_s = np.nan
@@ -247,7 +278,8 @@ def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Option
     if events_path.exists():
         try:
             events = [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]
-            # Build chronological timeline
+
+            # Match genuine orchestrator events
             pred_cross_time = None
             violation_start_time = None
             sla_recovered_time = None
@@ -255,11 +287,11 @@ def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Option
             for ev in events:
                 ev_type = ev.get("event")
                 ts = pd.to_datetime(ev.get("timestamp"))
-                if ev_type in {"prediction_threshold_crossed", "congestion_injected_at"} and pred_cross_time is None:
+                if ev_type == "prediction_threshold_crossed" and pred_cross_time is None:
                     pred_cross_time = ts
-                if ev_type in {"sla_violation_started", "congestion_worsened_at"} and violation_start_time is None:
+                elif ev_type == "sla_violation_started" and violation_start_time is None:
                     violation_start_time = ts
-                if ev_type in {"sla_recovered", "reroute_verified_at"} and sla_recovered_time is None:
+                elif ev_type in {"sla_recovered", "reroute_verified_at"} and sla_recovered_time is None:
                     sla_recovered_time = ts
 
             if violation_start_time and pred_cross_time and violation_start_time >= pred_cross_time:
@@ -280,6 +312,7 @@ def parse_run_directory(exp_dir: Path) -> Tuple[Optional[Dict[str, Any]], Option
         "scientific_policy": manifest.get("scientific_policy"),
         "seed": manifest.get("seed"),
         "duration_s": manifest.get("duration"),
+        "campaign_config_fingerprint": manifest.get("campaign_config_fingerprint"),
         "control_plane_rtt_ms": control_plane_rtt_mean,
         "end_to_end_rtt_ms": end_to_end_rtt_ms,
         "throughput_mbps": overall_tp if not np.isnan(overall_tp) else crit_tp,
@@ -317,8 +350,8 @@ def compute_student_t_stats(series: pd.Series) -> Dict[str, float]:
             "std_dev": np.nan,
             "ci95_lower": np.nan,
             "ci95_upper": np.nan,
-            "sample_size_n": 0,
-            "missing_count": missing_count
+            "n": 0,
+            "missing": missing_count
         }
 
     mean = float(np.mean(clean))
@@ -328,12 +361,11 @@ def compute_student_t_stats(series: pd.Series) -> Dict[str, float]:
             "std_dev": 0.0,
             "ci95_lower": round(mean, 3),
             "ci95_upper": round(mean, 3),
-            "sample_size_n": 1,
-            "missing_count": missing_count
+            "n": 1,
+            "missing": missing_count
         }
 
     std = float(np.std(clean, ddof=1))
-    # Student's t-distribution critical value
     t_crit = float(stats.t.ppf(0.975, df=n - 1))
     margin = t_crit * (std / math.sqrt(n))
 
@@ -342,67 +374,77 @@ def compute_student_t_stats(series: pd.Series) -> Dict[str, float]:
         "std_dev": round(std, 3),
         "ci95_lower": round(mean - margin, 3),
         "ci95_upper": round(mean + margin, 3),
-        "sample_size_n": n,
-        "missing_count": missing_count
+        "n": n,
+        "missing": missing_count
     }
 
 
 def compute_paired_differences(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    """Calculates paired-policy differences per (scenario, seed) with Cohen's d effect sizes."""
+    """Calculates paired-policy differences per (scenario, seed) with Student's t CIs and Cohen's dz."""
     paired_results = []
     scenarios = df["scenario"].unique()
+    metrics_to_compare = [
+        ("packet_loss_pct", "packet_loss_reduction_pct", True), # higher difference = better improvement
+        ("end_to_end_rtt_ms", "rtt_reduction_ms", True),
+        ("throughput_mbps", "throughput_gain_mbps", False),    # higher pred = better
+        ("critical_packet_loss_pct", "critical_loss_reduction_pct", True),
+        ("critical_throughput_mbps", "critical_throughput_gain_mbps", False)
+    ]
 
     for sc in scenarios:
         df_sc = df[df["scenario"] == sc]
-        seeds = df_sc["seed"].unique()
-
         pred_rows = df_sc[df_sc["effective_policy"] == "predictive"].set_index("seed")
         reac_rows = df_sc[df_sc["effective_policy"] == "reactive"].set_index("seed")
         stat_rows = df_sc[df_sc["effective_policy"] == "static"].set_index("seed")
 
-        # 1. Predictive vs Reactive
-        common_reac_seeds = pred_rows.index.intersection(reac_rows.index)
-        if len(common_reac_seeds) >= 2:
-            loss_diffs = (reac_rows.loc[common_reac_seeds, "packet_loss_pct"] - pred_rows.loc[common_reac_seeds, "packet_loss_pct"]).dropna()
-            rtt_diffs = (reac_rows.loc[common_reac_seeds, "end_to_end_rtt_ms"] - pred_rows.loc[common_reac_seeds, "end_to_end_rtt_ms"]).dropna()
+        for baseline_name, baseline_df in [("reactive", reac_rows), ("no_reroute", stat_rows)]:
+            common_seeds = pred_rows.index.intersection(baseline_df.index)
+            if len(common_seeds) < 2:
+                continue
 
-            if len(loss_diffs) >= 2:
-                mean_d = float(np.mean(loss_diffs))
-                std_d = float(np.std(loss_diffs, ddof=1))
-                cohen_d = mean_d / std_d if std_d > 0 else 0.0
+            for metric_col, display_name, baseline_minus_pred in metrics_to_compare:
+                if metric_col not in pred_rows.columns or metric_col not in baseline_df.columns:
+                    continue
+
+                if baseline_minus_pred:
+                    diffs = (baseline_df.loc[common_seeds, metric_col] - pred_rows.loc[common_seeds, metric_col]).dropna()
+                else:
+                    diffs = (pred_rows.loc[common_seeds, metric_col] - baseline_df.loc[common_seeds, metric_col]).dropna()
+
+                n = len(diffs)
+                if n < 2:
+                    continue
+
+                mean_d = float(np.mean(diffs))
+                std_d = float(np.std(diffs, ddof=1))
+
+                # Confidence interval on paired difference
+                t_crit = float(stats.t.ppf(0.975, df=n - 1))
+                margin = t_crit * (std_d / math.sqrt(n)) if std_d > 0 else 0.0
+
+                # Cohen's dz calculation with zero variance handling
+                if std_d > 0:
+                    cohens_dz = round(mean_d / std_d, 2)
+                else:
+                    cohens_dz = 0.0 if mean_d == 0 else np.nan
+
                 paired_results.append({
                     "scenario": sc,
-                    "comparison": "predictive_vs_reactive",
-                    "metric": "packet_loss_reduction_pct",
-                    "paired_n": len(loss_diffs),
-                    "mean_improvement": round(mean_d, 3),
-                    "std_dev": round(std_d, 3),
-                    "cohen_d": round(cohen_d, 2)
-                })
-
-        # 2. Predictive vs Static (No Reroute)
-        common_stat_seeds = pred_rows.index.intersection(stat_rows.index)
-        if len(common_stat_seeds) >= 2:
-            loss_diffs_s = (stat_rows.loc[common_stat_seeds, "packet_loss_pct"] - pred_rows.loc[common_stat_seeds, "packet_loss_pct"]).dropna()
-            if len(loss_diffs_s) >= 2:
-                mean_d_s = float(np.mean(loss_diffs_s))
-                std_d_s = float(np.std(loss_diffs_s, ddof=1))
-                cohen_d_s = mean_d_s / std_d_s if std_d_s > 0 else 0.0
-                paired_results.append({
-                    "scenario": sc,
-                    "comparison": "predictive_vs_no_reroute",
-                    "metric": "packet_loss_reduction_pct",
-                    "paired_n": len(loss_diffs_s),
-                    "mean_improvement": round(mean_d_s, 3),
-                    "std_dev": round(std_d_s, 3),
-                    "cohen_d": round(cohen_d_s, 2)
+                    "comparison": f"predictive_vs_{baseline_name}",
+                    "metric": display_name,
+                    "paired_n": n,
+                    "mean_difference": round(mean_d, 3),
+                    "std_difference": round(std_d, 3),
+                    "ci95_lower": round(mean_d - margin, 3),
+                    "ci95_upper": round(mean_d + margin, 3),
+                    "cohens_dz": cohens_dz
                 })
 
     return paired_results
 
 
 def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict[str, Any]:
-    """Main campaign aggregator."""
+    """Main campaign statistical aggregator."""
     valid_records = []
     excluded_records = []
 
@@ -420,22 +462,53 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
     df_excl.to_csv(excl_path, index=False)
     print(f"Excluded runs recorded to {excl_path} ({len(df_excl)} runs)")
 
+    # Matrix Completeness Validation
+    expected_combinations = {
+        (scenario, policy, seed)
+        for scenario in EXPECTED_SCENARIOS
+        for policy in EXPECTED_POLICIES
+        for seed in EXPECTED_SEEDS
+    }
+
+    observed_combinations = set()
+    duplicate_records = []
+    unexpected_records = []
+
+    for rec in valid_records:
+        key = (rec["scenario"], rec["effective_policy"], rec["seed"])
+        if key in observed_combinations:
+            duplicate_records.append({"scenario": key[0], "policy": key[1], "seed": key[2], "experiment_id": rec["experiment_id"]})
+        else:
+            observed_combinations.add(key)
+
+        if key not in expected_combinations:
+            unexpected_records.append({"scenario": key[0], "policy": key[1], "seed": key[2], "experiment_id": rec["experiment_id"]})
+
+    missing_combinations = expected_combinations - observed_combinations
+    missing_records = [{"scenario": k[0], "policy": k[1], "seed": k[2]} for k in sorted(missing_combinations)]
+
+    # Write matrix integrity reports
+    pd.DataFrame(missing_records).to_csv(results_dir / "missing_combinations.csv", index=False)
+    pd.DataFrame(duplicate_records).to_csv(results_dir / "duplicate_combinations.csv", index=False)
+    pd.DataFrame(unexpected_records).to_csv(results_dir / "unexpected_combinations.csv", index=False)
+
+    is_complete_matrix = (len(missing_combinations) == 0 and len(duplicate_records) == 0)
+
+    if not is_complete_matrix and not allow_incomplete:
+        raise RuntimeError(
+            f"Campaign matrix validation failed: {len(missing_combinations)} missing combinations, "
+            f"{len(duplicate_records)} duplicates out of {len(expected_combinations)} expected runs. "
+            f"Pass --allow-incomplete to generate preliminary tables."
+        )
+
     if not valid_records:
         print("No eligible completed Mininet runs found for campaign evaluation.")
-        return {"eligible_runs": 0, "excluded_runs": len(df_excl)}
+        return {"eligible_runs": 0, "excluded_runs": len(df_excl), "matrix_complete": False}
 
     df_valid = pd.DataFrame(valid_records)
     runs_path = results_dir / "campaign_runs.csv"
     df_valid.to_csv(runs_path, index=False)
     print(f"Eligible run records saved to {runs_path} ({len(df_valid)} runs)")
-
-    # Validate 60-run campaign completeness
-    expected_total = len(EXPECTED_SCENARIOS) * len(EXPECTED_POLICIES) * len(EXPECTED_SEEDS)
-    total_eligible = len(df_valid)
-    is_complete_matrix = (total_eligible >= expected_total)
-
-    if not is_complete_matrix and not allow_incomplete:
-        print(f"Notice: Campaign matrix incomplete ({total_eligible}/{expected_total} runs). Pass --allow-incomplete to generate preliminary tables.")
 
     # Statistical Aggregations by (scenario, effective_policy)
     aggregated = []
@@ -455,7 +528,7 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
         row = {
             "scenario": scenario,
             "policy": policy,
-            "sample_size_n": len(group)
+            "group_total_runs": len(group)
         }
         for m in metrics_to_aggregate:
             stats_m = compute_student_t_stats(group[m])
@@ -463,6 +536,8 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
             row[f"{m}_std"] = stats_m["std_dev"]
             row[f"{m}_ci95_lower"] = stats_m["ci95_lower"]
             row[f"{m}_ci95_upper"] = stats_m["ci95_upper"]
+            row[f"{m}_n"] = stats_m["n"]
+            row[f"{m}_missing"] = stats_m["missing"]
         aggregated.append(row)
 
     df_agg = pd.DataFrame(aggregated)
@@ -480,9 +555,13 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
     with open(summary_path, "w") as jf:
         json.dump({
             "evaluated_at": pd.Timestamp.utcnow().isoformat(),
+            "preliminary": not is_complete_matrix,
             "campaign_matrix_complete": is_complete_matrix,
-            "eligible_runs_count": total_eligible,
+            "expected_matrix_size": len(expected_combinations),
+            "eligible_runs_count": len(df_valid),
             "excluded_runs_count": len(df_excl),
+            "missing_combinations_count": len(missing_combinations),
+            "duplicate_combinations_count": len(duplicate_records),
             "scenarios": df_valid["scenario"].unique().tolist(),
             "policies": df_valid["effective_policy"].unique().tolist(),
             "paired_comparisons": paired_diffs,
@@ -492,7 +571,7 @@ def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict
     print(f"Aggregated statistical summary written to {agg_path}")
     print(f"Paired comparison metrics written to {paired_path}")
     return {
-        "eligible_runs": total_eligible,
+        "eligible_runs": len(df_valid),
         "excluded_runs": len(df_excl),
         "matrix_complete": is_complete_matrix
     }

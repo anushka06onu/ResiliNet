@@ -110,7 +110,7 @@ def test_experiments_scenarios_endpoint():
 
 
 def test_internal_configure_and_finalize_endpoints(tmp_path):
-    headers = {"X-ResiliNet-Internal-Token": "resilinet-internal-secret-token"}
+    headers = {"X-ResiliNet-Internal-Token": "resilinet-test-token"}
 
     # Test unauthorized access rejection
     res_unauth = client.post("/api/v1/internal/experiments/test_api_exp/configure", json={"policy": "reactive_threshold"})

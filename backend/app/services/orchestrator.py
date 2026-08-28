@@ -135,6 +135,22 @@ class Orchestrator:
                         target_switch = v
 
                 if edge_found and target_switch:
+                    if is_violation:
+                        self._log_experiment_event("prediction_threshold_crossed", {
+                            "link_id": link_id,
+                            "source_switch": switch,
+                            "target_switch": target_switch,
+                            "risk": risk,
+                            "source": "orchestrator"
+                        })
+                    if is_violation_actual:
+                        self._log_experiment_event("sla_violation_started", {
+                            "link_id": link_id,
+                            "source_switch": switch,
+                            "target_switch": target_switch,
+                            "source": "orchestrator"
+                        })
+
                     evaluate = False
                     if self.policy == "predictive" and is_violation:
                         evaluate = True
@@ -217,6 +233,14 @@ class Orchestrator:
                         if result.rollback_attempted:
                             rollback_result = "success" if result.rollback_success else "failed"
 
+                        # Log structured events to events.jsonl
+                        self._log_experiment_event("reroute_started", {
+                            "flow_id": flow_id,
+                            "link_id": f"{congested_u}-{congested_v}",
+                            "source": "orchestrator",
+                            "risk_before": risk_before
+                        })
+
                         # Record decision
                         decision = {
                             "decision_id": str(uuid.uuid4()),
@@ -228,9 +252,9 @@ class Orchestrator:
                             "original_path": path,
                             "proposed_path": proposed_path if success else (proposed_path if proposed_path else None),
                             "safeguard_result": msg,
-                            "installation_status": "success" if (success or failure_stage == "verification") else "failed",
-                            "verification_status": "success" if success else ("failed" if failure_stage == "verification" else "skipped"),
-                            "outcome_status": "success" if success else "failed",
+                            "installation_status": "INSTALLED" if (success or failure_stage == "verification") else "FAILED",
+                            "verification_status": "VERIFIED" if success else ("FAILED" if failure_stage == "verification" else "SKIPPED"),
+                            "outcome_status": "SUCCESS" if success else "FAILED",
                             "failure_stage": failure_stage,
                             "error_type": error_type,
                             "rollback_result": rollback_result
@@ -243,14 +267,28 @@ class Orchestrator:
                             if path[-1].startswith("h"): new_full_path.append(path[-1])
                             flow["current_path"] = new_full_path
                             flow["state"] = "STABLE"
+                            self._log_experiment_event("reroute_verified_at", {
+                                "flow_id": flow_id,
+                                "link_id": f"{congested_u}-{congested_v}",
+                                "source": "orchestrator",
+                                "new_path": new_full_path
+                            })
+                            self._log_experiment_event("sla_recovered", {
+                                "flow_id": flow_id,
+                                "link_id": f"{congested_u}-{congested_v}",
+                                "source": "orchestrator"
+                            })
                         else:
                             if result.rollback_attempted:
+                                self._log_experiment_event("rollback_started", {"flow_id": flow_id, "source": "orchestrator"})
                                 if result.rollback_success:
                                     flow["state"] = "ROLLBACK_COMPLETE"
                                     # Recovery transition to stable on original path
                                     flow["state"] = "STABLE"
+                                    self._log_experiment_event("rollback_completed", {"flow_id": flow_id, "status": "SUCCESS", "source": "orchestrator"})
                                 else:
                                     flow["state"] = "DEGRADED"
+                                    self._log_experiment_event("rollback_completed", {"flow_id": flow_id, "status": "FAILED", "source": "orchestrator"})
                             else:
                                 flow["state"] = "DEGRADED"
                             flow["sla_status"] = "Violated"
@@ -261,8 +299,29 @@ class Orchestrator:
                         except Exception as e:
                             logging.error(f"Failed to persist decision to SQLite: {e}")
                 finally:
-
                     lock.release()
+
+    def _log_experiment_event(self, event_name: str, details: dict = None):
+        """Append structured event to active experiment events.jsonl."""
+        if not self.active_experiment_id:
+            return
+        import json
+        from pathlib import Path
+        project_root = Path(__file__).resolve().parents[3]
+        events_file = project_root / "experiments" / "results" / self.active_experiment_id / "events.jsonl"
+        events_file.parent.mkdir(parents=True, exist_ok=True)
+        event_record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": event_name,
+            "experiment_id": self.active_experiment_id,
+            "source": details.get("source", "orchestrator") if details else "orchestrator",
+            "details": details or {}
+        }
+        try:
+            with open(events_file, "a") as f:
+                f.write(json.dumps(event_record) + "\n")
+        except Exception as e:
+            logging.error(f"Failed to log event {event_name}: {e}")
 
 # Singleton instance
 orchestrator = Orchestrator()
