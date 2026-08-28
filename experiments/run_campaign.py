@@ -94,31 +94,42 @@ def run_campaign(is_pilot: bool = False, allow_mock: bool = False, duration_over
         exp_dir = results_root / exp_id
         manifest_file = exp_dir / "manifest.json"
 
-        # Check for already completed eligible run
-        if not overwrite and manifest_file.exists():
-            try:
-                mdata = json.loads(manifest_file.read_text())
-                if (mdata.get("status") == "completed" and
-                    mdata.get("real_experiment") is True and
-                    mdata.get("eligible_for_analysis") is True and
-                    mdata.get("data_origin") == "mininet"):
-                    print(f"\n[{idx}/{total_expected}] Skipping already completed eligible run: {exp_id}")
-                    already_completed_runs += 1
-                    completed_eligible_runs += 1
-                    run_results.append({
-                        "run_index": idx,
-                        "experiment_id": exp_id,
-                        "scenario": scenario,
-                        "policy": policy,
-                        "seed": seed,
-                        "status": "already_completed",
-                        "eligible_for_analysis": True,
-                        "data_origin": "mininet"
-                    })
-                    save_campaign_progress()
-                    continue
-            except Exception:
-                pass
+        # Check for existing run directory
+        if exp_dir.exists():
+            if not overwrite and manifest_file.exists():
+                try:
+                    mdata = json.loads(manifest_file.read_text())
+                    if (mdata.get("status") == "completed" and
+                        mdata.get("real_experiment") is True and
+                        mdata.get("eligible_for_analysis") is True and
+                        mdata.get("data_origin") == "mininet"):
+                        print(f"\n[{idx}/{total_expected}] Skipping already completed eligible run: {exp_id}")
+                        already_completed_runs += 1
+                        completed_eligible_runs += 1
+                        run_results.append({
+                            "run_index": idx,
+                            "experiment_id": exp_id,
+                            "scenario": scenario,
+                            "policy": policy,
+                            "seed": seed,
+                            "status": "already_completed",
+                            "eligible_for_analysis": True,
+                            "data_origin": "mininet"
+                        })
+                        save_campaign_progress()
+                        continue
+                except Exception:
+                    pass
+
+            # If ineligible directory exists and overwrite is not set, archive it to preserve provenance
+            if not overwrite:
+                attempt_suffix = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                archived_dir = results_root / f"{exp_id}_attempt_{attempt_suffix}"
+                try:
+                    exp_dir.rename(archived_dir)
+                    print(f"Preserved previous incomplete run under: {archived_dir.name}")
+                except Exception as e:
+                    print(f"Warning: could not archive existing directory {exp_id}: {e}")
 
         print(f"\n[{idx}/{total_expected}] Running {exp_id}...")
 
@@ -131,7 +142,7 @@ def run_campaign(is_pilot: bool = False, allow_mock: bool = False, duration_over
                 experiment_id=exp_id,
                 allow_mock=allow_mock,
                 results_root=results_root,
-                overwrite=True
+                overwrite=overwrite
             )
 
             # Read actual generated manifest to determine true scientific eligibility

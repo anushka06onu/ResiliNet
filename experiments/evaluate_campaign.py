@@ -576,39 +576,40 @@ def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame
                     if "link_id" not in df_p.columns:
                         df_p["link_id"] = "default_link"
 
-                    # Perform link-matched as-of time join
+                    # Perform strict same-link matched as-of time join
                     for _, p_row in df_p.iterrows():
                         t_pred = p_row["ts"]
                         p_link = str(p_row["link_id"])
                         p_prob = float(p_row["congestion_probability"])
                         t_target = t_pred + pd.Timedelta(seconds=forecast_horizon_s)
 
-                        # Match telemetry on the same link (or any link if general) near target time
-                        tel_matches = df_t[
+                        # Match telemetry ONLY on the exact same link near target horizon time
+                        link_tel = df_t[
+                            (df_t["link_id"] == p_link) &
                             (df_t["ts"] >= t_target - pd.Timedelta(seconds=time_tolerance_s)) &
                             (df_t["ts"] <= t_target + pd.Timedelta(seconds=time_tolerance_s))
                         ]
-                        if not tel_matches.empty:
-                            # Prefer exact link match if available
-                            link_tel = tel_matches[tel_matches["link_id"] == p_link]
-                            obs_row = link_tel.iloc[0] if not link_tel.empty else tel_matches.iloc[0]
+                        if link_tel.empty:
+                            # Strict requirement: no cross-link fallback permitted
+                            continue
 
-                            obs_loss = float(obs_row.get("loss_percent", 0.0))
-                            obs_rtt = float(obs_row.get("control_plane_rtt_ms", 0.0))
-                            is_violation_actual = bool(obs_loss > max_loss or obs_rtt > max_latency)
+                        obs_row = link_tel.iloc[0]
+                        obs_loss = float(obs_row.get("loss_percent", 0.0))
+                        obs_rtt = float(obs_row.get("control_plane_rtt_ms", 0.0))
+                        is_violation_actual = bool(obs_loss > max_loss or obs_rtt > max_latency)
 
-                            aligned_records.append({
-                                "experiment_id": exp_id,
-                                "prediction_timestamp": p_row["timestamp"],
-                                "link_id": p_link,
-                                "predicted_probability": p_prob,
-                                "predicted_label": int(p_prob >= 0.5),
-                                "forecast_horizon_seconds": forecast_horizon_s,
-                                "observed_timestamp": str(obs_row["timestamp"]),
-                                "observed_loss_percent": obs_loss,
-                                "observed_rtt_ms": obs_rtt,
-                                "future_observed_violation": int(is_violation_actual)
-                            })
+                        aligned_records.append({
+                            "experiment_id": exp_id,
+                            "prediction_timestamp": p_row["timestamp"],
+                            "link_id": p_link,
+                            "predicted_probability": p_prob,
+                            "predicted_label": int(p_prob >= 0.5),
+                            "forecast_horizon_seconds": forecast_horizon_s,
+                            "observed_timestamp": str(obs_row["timestamp"]),
+                            "observed_loss_percent": obs_loss,
+                            "observed_rtt_ms": obs_rtt,
+                            "future_observed_violation": int(is_violation_actual)
+                        })
             except Exception:
                 pass
 
@@ -616,6 +617,7 @@ def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame
         return {
             "predictive_performance_validated": False,
             "sample_size": 0,
+            "reason": "no_aligned_prediction_telemetry_pairs",
             "note": "No aligned prediction-telemetry pairs found"
         }
 
@@ -640,31 +642,41 @@ def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame
     missed_event_rate = round(fn / (tp + fn), 3) if (tp + fn) > 0 else np.nan
     brier_score = round(float(np.mean((y_prob_arr - y_true_arr) ** 2)), 4)
 
-    # Compute ROC-AUC and PR-AUC
+    # Compute ROC-AUC and PR-AUC with strict multi-class validation
     roc_auc = None
     pr_auc = None
     auc_note = None
+    pr_auc_error = None
 
     unique_classes = np.unique(y_true_arr)
-    if len(unique_classes) >= 2:
+    has_both_classes = bool(len(unique_classes) >= 2 and np.sum(y_true_arr == 1) > 0 and np.sum(y_true_arr == 0) > 0)
+
+    if has_both_classes:
         try:
             from sklearn.metrics import roc_auc_score, average_precision_score
             roc_auc = round(float(roc_auc_score(y_true_arr, y_prob_arr)), 3)
             pr_auc = round(float(average_precision_score(y_true_arr, y_prob_arr)), 3)
-        except Exception:
-            # Fallback ranking calculation if sklearn not installed
-            n_pos = np.sum(y_true_arr == 1)
-            n_neg = np.sum(y_true_arr == 0)
-            ranks = stats.rankdata(y_prob_arr)
-            sum_pos_ranks = np.sum(ranks[y_true_arr == 1])
-            u_stat = sum_pos_ranks - n_pos * (n_pos + 1) / 2.0
-            roc_auc = round(float(u_stat / (n_pos * n_neg)), 3)
-            pr_auc = round(float(np.mean(y_true_arr)), 3)
+        except Exception as e:
+            try:
+                # Rank-based ROC-AUC fallback
+                n_pos = np.sum(y_true_arr == 1)
+                n_neg = np.sum(y_true_arr == 0)
+                ranks = stats.rankdata(y_prob_arr)
+                sum_pos_ranks = np.sum(ranks[y_true_arr == 1])
+                u_stat = sum_pos_ranks - n_pos * (n_pos + 1) / 2.0
+                roc_auc = round(float(u_stat / (n_pos * n_neg)), 3)
+            except Exception:
+                pass
+            pr_auc = None
+            pr_auc_error = f"scikit-learn average_precision_score calculation unavailable: {e}"
     else:
-        auc_note = f"Single-class ground truth observed in dataset (class: {unique_classes[0] if len(unique_classes) > 0 else 'none'}). AUC undefined."
+        auc_note = f"Single-class ground truth observed in dataset (classes: {unique_classes.tolist()}). Both positive and negative instances required."
 
-    return {
-        "predictive_performance_validated": True,
+    # Validation criteria: must have both classes, valid alignment, and positive sample count
+    is_validated = bool(has_both_classes and len(y_true_arr) >= 2)
+
+    result_dict = {
+        "predictive_performance_validated": is_validated,
         "sample_size": len(y_true_arr),
         "true_positives": tp,
         "true_negatives": tn,
@@ -678,9 +690,16 @@ def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame
         "missed_event_rate": missed_event_rate,
         "brier_score": brier_score,
         "roc_auc": roc_auc,
-        "pr_auc": pr_auc,
-        "auc_note": auc_note
+        "pr_auc": pr_auc
     }
+    if not is_validated and not has_both_classes:
+        result_dict["reason"] = "single_class_ground_truth"
+    if auc_note:
+        result_dict["auc_note"] = auc_note
+    if pr_auc_error:
+        result_dict["pr_auc_error"] = pr_auc_error
+
+    return result_dict
 
 
 def evaluate_campaign(results_dir: Path, allow_incomplete: bool = False) -> Dict[str, Any]:

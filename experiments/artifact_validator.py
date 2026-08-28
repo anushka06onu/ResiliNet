@@ -248,6 +248,21 @@ def validate_finalized_artifacts(run_dir: Path, policy: str, mode: str = "REAL")
         except Exception as e:
             errors.append(f"events.jsonl read error: {e}")
 
+    # Detect scenario for scenario-specific validation
+    scenario_name = None
+    if (run_dir / "scenario_parameters.json").exists():
+        try:
+            pdata = json.loads((run_dir / "scenario_parameters.json").read_text())
+            scenario_name = pdata.get("scenario")
+        except Exception:
+            pass
+    if not scenario_name and (run_dir / "manifest.json").exists():
+        try:
+            mdata = json.loads((run_dir / "manifest.json").read_text())
+            scenario_name = mdata.get("scenario")
+        except Exception:
+            pass
+
     # 5. Evidence report validation
     ev_rep_file = run_dir / "evidence_report.json"
     if not ev_rep_file.exists():
@@ -262,7 +277,7 @@ def validate_finalized_artifacts(run_dir: Path, policy: str, mode: str = "REAL")
         except Exception as e:
             errors.append(f"evidence_report.json corrupt: {e}")
 
-    # 6. Switches and traffic directory validation
+    # 6. Switches and scenario-specific traffic directory validation
     switches_dir = run_dir / "switches"
     traffic_dir = run_dir / "traffic"
 
@@ -274,7 +289,25 @@ def validate_finalized_artifacts(run_dir: Path, policy: str, mode: str = "REAL")
     if not traffic_dir.exists() or not any(traffic_dir.iterdir()):
         errors.append("traffic/ directory is missing or empty")
     else:
-        report["traffic_valid"] = True
+        traffic_errs = []
+        if scenario_name == "concurrent_flows":
+            required_traffic = ["critical_iperf_server.log", "critical_ping.txt"]
+        elif scenario_name in ["normal", "gradual_congestion", "sudden_surge"]:
+            required_traffic = ["ping_after.txt", "iperf_server.log"]
+        else:
+            required_traffic = ["ping_after.txt", "iperf_server.log"]
+
+        for req_f in required_traffic:
+            fpath = traffic_dir / req_f
+            if not fpath.exists():
+                traffic_errs.append(f"traffic/{req_f} is missing for scenario '{scenario_name or 'unknown'}'")
+            elif fpath.stat().st_size == 0:
+                traffic_errs.append(f"traffic/{req_f} is empty (0 bytes) for scenario '{scenario_name or 'unknown'}'")
+
+        if traffic_errs:
+            errors.extend(traffic_errs)
+        else:
+            report["traffic_valid"] = True
 
     # 7. Scenario parameters validation
     params_file = run_dir / "scenario_parameters.json"
