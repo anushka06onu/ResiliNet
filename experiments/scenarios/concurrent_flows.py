@@ -74,18 +74,18 @@ def run_concurrent_flows():
 
         # Start servers on destination
         info('*** Initializing iperf receiver servers on h4\n')
-        h4.cmd(f'iperf -s -u -p 5001 -i 1 > {traffic_dir}/iperf_critical_server.log &')
-        h4.cmd(f'iperf -s -u -p 5002 -i 1 > {traffic_dir}/iperf_video_server.log &')
-        h4.cmd(f'iperf -s -u -p 5003 -i 1 > {traffic_dir}/iperf_bulk_server.log &')
+        h4.cmd(f'iperf -s -u -p 5001 -i 1 > {traffic_dir}/critical_iperf_server.log &')
+        h4.cmd(f'iperf -s -u -p 5002 -i 1 > {traffic_dir}/video_iperf_server.log &')
+        h4.cmd(f'iperf -s -u -p 5003 -i 1 > {traffic_dir}/bulk_iperf_server.log &')
 
         # Phase 1: Normal concurrent operation
         info('*** Phase 1: Normal concurrent operation (Critical + Video + Bulk)\n')
         log_experiment_event(results_dir, "traffic_started_at", {"critical_bw": crit_bw, "video_bw": video_bw, "bulk_bw": bulk_bw})
-        h1.cmd(f'iperf -c {h4.IP()} -u -p 5001 -b {crit_bw}M -t {duration} > {traffic_dir}/iperf_critical_client.log &')
+        h1.cmd(f'iperf -c {h4.IP()} -u -p 5001 -b {crit_bw}M -t {duration} > {traffic_dir}/critical_iperf_client.log &')
         if h2 != h1:
-            h2.cmd(f'iperf -c {h4.IP()} -u -p 5002 -b {video_bw}M -t {duration} > {traffic_dir}/iperf_video_client.log &')
+            h2.cmd(f'iperf -c {h4.IP()} -u -p 5002 -b {video_bw}M -t {duration} > {traffic_dir}/video_iperf_client.log &')
         if h3 != h1:
-            h3.cmd(f'iperf -c {h4.IP()} -u -p 5003 -b {bulk_bw}M -t {duration} > {traffic_dir}/iperf_bulk_client.log &')
+            h3.cmd(f'iperf -c {h4.IP()} -u -p 5003 -b {bulk_bw}M -t {duration} > {traffic_dir}/bulk_iperf_client.log &')
 
         time.sleep(duration // 3)
 
@@ -104,6 +104,8 @@ def run_concurrent_flows():
         # Post-intervention latency measurement
         ping_out_after = h1.cmd(f'ping -c 5 {h4.IP()}')
         with open(traffic_dir / "ping_after.txt", "w") as f:
+            f.write(ping_out_after)
+        with open(traffic_dir / "critical_ping.txt", "w") as f:
             f.write(ping_out_after)
 
         # Capture post-intervention state before tearing down network

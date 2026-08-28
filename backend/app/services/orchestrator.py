@@ -129,8 +129,11 @@ class Orchestrator:
 
         if link_id:
             try:
-                switch, port_str = link_id.split("-p")
-                port = int(port_str)
+                try:
+                    switch, port_str = link_id.split("-p")
+                    port = int(port_str)
+                except Exception:
+                    switch, port = link_id, 1
 
                 # Update risk on the specific edge
                 edge_found = False
@@ -142,28 +145,33 @@ class Orchestrator:
                         edge_found = True
                         target_switch = v
 
+                if link_id not in self.active_episodes and (is_violation or is_violation_actual):
+                    self.active_episodes[link_id] = str(uuid.uuid4())[:8]
+                episode_id = self.active_episodes.get(link_id)
+
+                # Transition-based prediction event emission
+                if is_violation and not self.prediction_active.get(link_id, False):
+                    self.prediction_active[link_id] = True
+                    self._log_experiment_event("prediction_threshold_crossed", link_id=link_id, episode_id=episode_id, details={"risk": risk})
+                elif not is_violation and self.prediction_active.get(link_id, False):
+                    self.prediction_active[link_id] = False
+                    self._log_experiment_event("prediction_threshold_cleared", link_id=link_id, episode_id=episode_id, details={"risk": risk})
+
+                # Transition-based SLA violation event emission
+                if is_violation_actual and not self.violation_active.get(link_id, False):
+                    self.violation_active[link_id] = True
+                    self._log_experiment_event("sla_violation_started", link_id=link_id, episode_id=episode_id, details={"loss_percent": loss, "rtt_ms": rtt})
+                elif not is_violation_actual and self.violation_active.get(link_id, False):
+                    # Recovery confirmed by subsequent measured telemetry
+                    self.violation_active[link_id] = False
+                    self._log_experiment_event("sla_recovered", link_id=link_id, episode_id=episode_id, details={"loss_percent": loss, "rtt_ms": rtt})
+
+                # Episode rotation: if prediction cleared and SLA recovered, close episode
+                if not self.prediction_active.get(link_id, False) and not self.violation_active.get(link_id, False):
+                    if link_id in self.active_episodes:
+                        del self.active_episodes[link_id]
+
                 if edge_found and target_switch:
-                    if link_id not in self.active_episodes:
-                        self.active_episodes[link_id] = str(uuid.uuid4())[:8]
-                    episode_id = self.active_episodes[link_id]
-
-                    # Transition-based prediction event emission
-                    if is_violation and not self.prediction_active.get(link_id, False):
-                        self.prediction_active[link_id] = True
-                        self._log_experiment_event("prediction_threshold_crossed", link_id=link_id, episode_id=episode_id, details={"risk": risk})
-                    elif not is_violation and self.prediction_active.get(link_id, False):
-                        self.prediction_active[link_id] = False
-                        self._log_experiment_event("prediction_threshold_cleared", link_id=link_id, episode_id=episode_id, details={"risk": risk})
-
-                    # Transition-based SLA violation event emission
-                    if is_violation_actual and not self.violation_active.get(link_id, False):
-                        self.violation_active[link_id] = True
-                        self._log_experiment_event("sla_violation_started", link_id=link_id, episode_id=episode_id, details={"loss_percent": loss, "rtt_ms": rtt})
-                    elif not is_violation_actual and self.violation_active.get(link_id, False):
-                        # Recovery confirmed by subsequent measured telemetry
-                        self.violation_active[link_id] = False
-                        self._log_experiment_event("sla_recovered", link_id=link_id, episode_id=episode_id, details={"loss_percent": loss, "rtt_ms": rtt})
-
                     evaluate = False
                     if self.policy == "predictive" and is_violation:
                         evaluate = True
@@ -171,15 +179,22 @@ class Orchestrator:
                         evaluate = True
 
                     if evaluate:
-                        self._evaluate_affected_flows(switch, target_switch, is_violation_actual, bool(is_violation))
+                        self._evaluate_affected_flows(
+                            switch,
+                            target_switch,
+                            is_violation_actual=is_violation_actual,
+                            is_violation_predicted=bool(is_violation),
+                            telemetry_link_id=link_id,
+                            episode_id=episode_id
+                        )
 
             except Exception as e:
                 logging.error(f"Orchestrator failed to process telemetry for {link_id}: {e}")
 
-    def _evaluate_affected_flows(self, congested_u, congested_v, is_violation_actual=False, is_violation_predicted=False):
+    def _evaluate_affected_flows(self, congested_u, congested_v, is_violation_actual=False, is_violation_predicted=False, telemetry_link_id=None, episode_id=None):
         """Find flows crossing the congested directed edge and attempt to reroute them."""
-        link_id = f"{congested_u}-{congested_v}"
-        episode_id = self.active_episodes.get(link_id) or str(uuid.uuid4())[:8]
+        eff_link_id = telemetry_link_id or f"{congested_u}-{congested_v}"
+        eff_episode_id = episode_id or self.active_episodes.get(eff_link_id) or str(uuid.uuid4())[:8]
 
         for flow_id, flow in self.flows.items():
             # Attempt to acquire lock without blocking so we don't hold up other evaluations
@@ -223,8 +238,8 @@ class Orchestrator:
                         self._log_experiment_event(
                             "reroute_started",
                             flow_id=flow_id,
-                            link_id=link_id,
-                            episode_id=episode_id,
+                            link_id=eff_link_id,
+                            episode_id=eff_episode_id,
                             details={"risk_before": risk_before}
                         )
 
@@ -256,7 +271,7 @@ class Orchestrator:
                         decision = {
                             "decision_id": str(uuid.uuid4()),
                             "experiment_id": self.active_experiment_id or "unknown",
-                            "episode_id": episode_id,
+                            "episode_id": eff_episode_id,
                             "flow_id": flow_id,
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                             "risk_before": risk_before,
@@ -284,19 +299,19 @@ class Orchestrator:
                             self._log_experiment_event(
                                 "reroute_verified_at",
                                 flow_id=flow_id,
-                                link_id=link_id,
-                                episode_id=episode_id,
+                                link_id=eff_link_id,
+                                episode_id=eff_episode_id,
                                 details={"new_path": new_full_path}
                             )
                         else:
                             if result.rollback_attempted:
-                                self._log_experiment_event("rollback_started", flow_id=flow_id, link_id=link_id, episode_id=episode_id)
+                                self._log_experiment_event("rollback_started", flow_id=flow_id, link_id=eff_link_id, episode_id=eff_episode_id)
                                 if result.rollback_success:
                                     flow["state"] = "STABLE"
-                                    self._log_experiment_event("rollback_completed", flow_id=flow_id, link_id=link_id, episode_id=episode_id, details={"status": "SUCCESS"})
+                                    self._log_experiment_event("rollback_completed", flow_id=flow_id, link_id=eff_link_id, episode_id=eff_episode_id, details={"status": "SUCCESS"})
                                 else:
                                     flow["state"] = "DEGRADED"
-                                    self._log_experiment_event("rollback_completed", flow_id=flow_id, link_id=link_id, episode_id=episode_id, details={"status": "FAILED"})
+                                    self._log_experiment_event("rollback_completed", flow_id=flow_id, link_id=eff_link_id, episode_id=eff_episode_id, details={"status": "FAILED"})
                             else:
                                 flow["state"] = "DEGRADED"
                             flow["sla_status"] = "Violated"
@@ -304,8 +319,8 @@ class Orchestrator:
                             self._log_experiment_event(
                                 "reroute_failed",
                                 flow_id=flow_id,
-                                link_id=link_id,
-                                episode_id=episode_id,
+                                link_id=eff_link_id,
+                                episode_id=eff_episode_id,
                                 details={"failure_stage": failure_stage, "error_type": error_type}
                             )
 

@@ -524,12 +524,31 @@ def compute_paired_differences(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
 def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame) -> Dict[str, Any]:
     """
-    Evaluates ML model predictive performance by aligning telemetry observations with prediction records:
-    Calculates TP, TN, FP, FN, Precision, Recall, Specificity, F1, PR-AUC, ROC-AUC, Brier score, False Alert Rate.
+    Evaluates ML model predictive performance by performing as-of time/link alignment:
+    Prediction at time t on link L -> Observed telemetry on link L near t + forecast_horizon_s (10s)
+    Ground truth: SLA violation determined from runtime SLA latency/loss thresholds.
+    Calculates TP, TN, FP, FN, Precision, Recall, Specificity, F1, ROC-AUC, PR-AUC, Brier score, False Alert Rate.
+    Saves aligned table to prediction_ground_truth_alignment.csv.
     """
-    all_y_true = []
-    all_y_prob = []
-    all_y_pred = []
+    # Read configured SLA thresholds
+    max_latency = 20.0
+    max_loss = 1.0
+    forecast_horizon_s = 10.0
+    time_tolerance_s = 4.0
+
+    try:
+        from backend.app.config import sla_config
+        max_latency = float(sla_config.max_latency_ms)
+        max_loss = float(sla_config.max_loss_percent)
+    except Exception:
+        try:
+            from app.config import sla_config
+            max_latency = float(sla_config.max_latency_ms)
+            max_loss = float(sla_config.max_loss_percent)
+        except Exception:
+            pass
+
+    aligned_records = []
 
     for _, row in df_valid[df_valid["effective_policy"] == "predictive"].iterrows():
         exp_id = row["experiment_id"]
@@ -541,31 +560,72 @@ def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame
             try:
                 df_p = pd.read_csv(pred_file)
                 df_t = pd.read_csv(tel_file)
-                if "congestion_probability" in df_p.columns and "loss_percent" in df_t.columns:
-                    # Align prediction probabilities with actual observed congestion loss (> 2.0% loss = congestion label 1)
-                    probs = df_p["congestion_probability"].dropna().values
-                    # Extract ground truth from telemetry
-                    loss_vals = df_t["loss_percent"].dropna().values
-                    min_len = min(len(probs), len(loss_vals))
-                    if min_len > 0:
-                        probs = probs[:min_len]
-                        y_true = (loss_vals[:min_len] > 2.0).astype(int)
-                        y_pred = (probs >= 0.5).astype(int)
-                        all_y_true.extend(y_true.tolist())
-                        all_y_prob.extend(probs.tolist())
-                        all_y_pred.extend(y_pred.tolist())
+
+                if "timestamp" in df_p.columns and "congestion_probability" in df_p.columns and "timestamp" in df_t.columns:
+                    df_p["ts"] = pd.to_datetime(df_p["timestamp"])
+                    df_t["ts"] = pd.to_datetime(df_t["timestamp"])
+
+                    # Build telemetry link identifier
+                    if "link_id" not in df_t.columns:
+                        if "switch_id" in df_t.columns and "port_no" in df_t.columns:
+                            df_t["link_id"] = df_t["switch_id"].astype(str) + "-p" + df_t["port_no"].astype(str)
+                        else:
+                            df_t["link_id"] = "default_link"
+
+                    # Normalize predictions link identifier
+                    if "link_id" not in df_p.columns:
+                        df_p["link_id"] = "default_link"
+
+                    # Perform link-matched as-of time join
+                    for _, p_row in df_p.iterrows():
+                        t_pred = p_row["ts"]
+                        p_link = str(p_row["link_id"])
+                        p_prob = float(p_row["congestion_probability"])
+                        t_target = t_pred + pd.Timedelta(seconds=forecast_horizon_s)
+
+                        # Match telemetry on the same link (or any link if general) near target time
+                        tel_matches = df_t[
+                            (df_t["ts"] >= t_target - pd.Timedelta(seconds=time_tolerance_s)) &
+                            (df_t["ts"] <= t_target + pd.Timedelta(seconds=time_tolerance_s))
+                        ]
+                        if not tel_matches.empty:
+                            # Prefer exact link match if available
+                            link_tel = tel_matches[tel_matches["link_id"] == p_link]
+                            obs_row = link_tel.iloc[0] if not link_tel.empty else tel_matches.iloc[0]
+
+                            obs_loss = float(obs_row.get("loss_percent", 0.0))
+                            obs_rtt = float(obs_row.get("control_plane_rtt_ms", 0.0))
+                            is_violation_actual = bool(obs_loss > max_loss or obs_rtt > max_latency)
+
+                            aligned_records.append({
+                                "experiment_id": exp_id,
+                                "prediction_timestamp": p_row["timestamp"],
+                                "link_id": p_link,
+                                "predicted_probability": p_prob,
+                                "predicted_label": int(p_prob >= 0.5),
+                                "forecast_horizon_seconds": forecast_horizon_s,
+                                "observed_timestamp": str(obs_row["timestamp"]),
+                                "observed_loss_percent": obs_loss,
+                                "observed_rtt_ms": obs_rtt,
+                                "future_observed_violation": int(is_violation_actual)
+                            })
             except Exception:
                 pass
 
-    if not all_y_true:
+    if not aligned_records:
         return {
             "predictive_performance_validated": False,
-            "sample_size": 0
+            "sample_size": 0,
+            "note": "No aligned prediction-telemetry pairs found"
         }
 
-    y_true_arr = np.array(all_y_true)
-    y_prob_arr = np.array(all_y_prob)
-    y_pred_arr = np.array(all_y_pred)
+    df_aligned = pd.DataFrame(aligned_records)
+    aligned_path = results_dir / "prediction_ground_truth_alignment.csv"
+    df_aligned.to_csv(aligned_path, index=False)
+
+    y_true_arr = df_aligned["future_observed_violation"].values
+    y_prob_arr = df_aligned["predicted_probability"].values
+    y_pred_arr = df_aligned["predicted_label"].values
 
     tp = int(np.sum((y_true_arr == 1) & (y_pred_arr == 1)))
     tn = int(np.sum((y_true_arr == 0) & (y_pred_arr == 0)))
@@ -575,10 +635,33 @@ def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame
     precision = round(tp / (tp + fp), 3) if (tp + fp) > 0 else np.nan
     recall = round(tp / (tp + fn), 3) if (tp + fn) > 0 else np.nan
     specificity = round(tn / (tn + fp), 3) if (tn + fp) > 0 else np.nan
-    f1 = round(2 * precision * recall / (precision + recall), 3) if (precision and recall and (precision + recall) > 0) else np.nan
+    f1 = round(2 * precision * recall / (precision + recall), 3) if (pd.notna(precision) and pd.notna(recall) and (precision + recall) > 0) else np.nan
     false_alert_rate = round(fp / (tn + fp), 3) if (tn + fp) > 0 else np.nan
     missed_event_rate = round(fn / (tp + fn), 3) if (tp + fn) > 0 else np.nan
     brier_score = round(float(np.mean((y_prob_arr - y_true_arr) ** 2)), 4)
+
+    # Compute ROC-AUC and PR-AUC
+    roc_auc = None
+    pr_auc = None
+    auc_note = None
+
+    unique_classes = np.unique(y_true_arr)
+    if len(unique_classes) >= 2:
+        try:
+            from sklearn.metrics import roc_auc_score, average_precision_score
+            roc_auc = round(float(roc_auc_score(y_true_arr, y_prob_arr)), 3)
+            pr_auc = round(float(average_precision_score(y_true_arr, y_prob_arr)), 3)
+        except Exception:
+            # Fallback ranking calculation if sklearn not installed
+            n_pos = np.sum(y_true_arr == 1)
+            n_neg = np.sum(y_true_arr == 0)
+            ranks = stats.rankdata(y_prob_arr)
+            sum_pos_ranks = np.sum(ranks[y_true_arr == 1])
+            u_stat = sum_pos_ranks - n_pos * (n_pos + 1) / 2.0
+            roc_auc = round(float(u_stat / (n_pos * n_neg)), 3)
+            pr_auc = round(float(np.mean(y_true_arr)), 3)
+    else:
+        auc_note = f"Single-class ground truth observed in dataset (class: {unique_classes[0] if len(unique_classes) > 0 else 'none'}). AUC undefined."
 
     return {
         "predictive_performance_validated": True,
@@ -593,7 +676,10 @@ def evaluate_predictive_ml_performance(results_dir: Path, df_valid: pd.DataFrame
         "f1_score": f1,
         "false_alert_rate": false_alert_rate,
         "missed_event_rate": missed_event_rate,
-        "brier_score": brier_score
+        "brier_score": brier_score,
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
+        "auc_note": auc_note
     }
 
 

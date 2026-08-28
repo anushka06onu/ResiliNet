@@ -2,7 +2,7 @@
 """
 Centralized Artifact Validation and Fingerprinting Module for ResiliNet.
 Enforces rigorous validation rules, schema compliance, row count accounting,
-and cryptographic campaign invariant fingerprinting.
+and comprehensive cryptographic campaign invariant fingerprinting.
 """
 
 import hashlib
@@ -38,15 +38,18 @@ def get_file_sha256(filepath: Path) -> str:
     return h.hexdigest()
 
 
-def compute_campaign_invariant_fingerprint(project_root: Path) -> Dict[str, str]:
+def compute_campaign_invariant_fingerprint(project_root: Path) -> Dict[str, Any]:
     """
     Computes the campaign invariant fingerprint that must be IDENTICAL across all 60 campaign runs:
-    - Git commit
-    - Model SHA256 & run ID
-    - Topology SHA256
-    - Ryu Controller code SHA256
-    - Predictive Router code SHA256
-    - SLA decision thresholds
+    - Full Git commit
+    - Topology script SHA256 (small_test.py)
+    - ML model file SHA256 (lightgbm_model.txt)
+    - ML model metadata SHA256 and run_id
+    - Ryu controller code SHA256 (resilinet_ryu.py)
+    - Predictive Router code SHA256 (predictive_routing.py)
+    - Feature pipeline SHA256 (feature_pipeline.py)
+    - Campaign YAML specification SHA256 (campaign.yaml)
+    - SLA runtime configuration values
     """
     git_commit = "unknown"
     try:
@@ -55,25 +58,56 @@ def compute_campaign_invariant_fingerprint(project_root: Path) -> Dict[str, str]
     except Exception:
         pass
 
+    topo_path = project_root / "network" / "topologies" / "small_test.py"
     model_path = project_root / "ml" / "artifacts" / "lightgbm_model.txt"
-    topo_path = project_root / "frontend" / "public" / "topology.json"
+    meta_path = project_root / "ml" / "artifacts" / "model_metadata.json"
     ryu_path = project_root / "network" / "controller" / "resilinet_ryu.py"
     router_path = project_root / "network" / "routing" / "predictive_routing.py"
+    feature_path = project_root / "data_pipeline" / "feature_pipeline.py"
+    campaign_yaml = project_root / "experiments" / "campaign.yaml"
 
-    model_hash = get_file_sha256(model_path)
-    topo_hash = get_file_sha256(topo_path)
-    ryu_hash = get_file_sha256(ryu_path)
-    router_hash = get_file_sha256(router_path)
+    model_run_id = "unknown"
+    if meta_path.exists():
+        try:
+            meta_data = json.loads(meta_path.read_text())
+            model_run_id = meta_data.get("run_id", "unknown")
+        except Exception:
+            pass
+
+    # Read runtime SLA configuration dynamically
+    max_latency = 20.0
+    max_loss = 1.0
+    decision_threshold = 0.5
+    sampling_interval = 2
+    forecast_horizon = 10
+
+    try:
+        from backend.app.config import sla_config
+        max_latency = float(sla_config.max_latency_ms)
+        max_loss = float(sla_config.max_loss_percent)
+    except Exception:
+        try:
+            from app.config import sla_config
+            max_latency = float(sla_config.max_latency_ms)
+            max_loss = float(sla_config.max_loss_percent)
+        except Exception:
+            pass
 
     components = {
         "git_commit": git_commit,
-        "model_sha256": model_hash,
-        "topology_sha256": topo_hash,
-        "ryu_controller_sha256": ryu_hash,
-        "predictive_router_sha256": router_hash,
-        "decision_threshold": 0.5,
-        "sampling_interval_s": 2,
-        "forecast_horizon_s": 10
+        "topology_sha256": get_file_sha256(topo_path),
+        "model_sha256": get_file_sha256(model_path),
+        "model_metadata_sha256": get_file_sha256(meta_path),
+        "model_run_id": model_run_id,
+        "ryu_controller_sha256": get_file_sha256(ryu_path),
+        "predictive_router_sha256": get_file_sha256(router_path),
+        "feature_pipeline_sha256": get_file_sha256(feature_path),
+        "campaign_spec_sha256": get_file_sha256(campaign_yaml),
+        "sla_max_latency_ms": max_latency,
+        "sla_max_loss_percent": max_loss,
+        "decision_threshold": decision_threshold,
+        "sampling_interval_s": sampling_interval,
+        "forecast_horizon_s": forecast_horizon
     }
 
     raw_str = "|".join(f"{k}:{v}" for k, v in sorted(components.items()))
@@ -96,6 +130,8 @@ def compute_run_config_fingerprint(scenario: str, policy: str, seed: int, durati
 def validate_finalized_artifacts(run_dir: Path, policy: str, mode: str = "REAL") -> Tuple[bool, Dict[str, Any], List[str]]:
     """
     Performs comprehensive schema, row-count, and semantic verification of all run artifacts.
+    Requires telemetry, predictions, routing decisions, events, evidence report,
+    switch state dumps, traffic logs, and scenario parameters.
     Returns (is_valid, validation_report, error_list).
     """
     canon_policy = normalize_policy(policy)
@@ -207,16 +243,22 @@ def validate_finalized_artifacts(run_dir: Path, policy: str, mode: str = "REAL")
             if valid_syntax and ev_count > 0:
                 report["events_valid"] = True
                 report["event_rows"] = ev_count
+            elif ev_count == 0:
+                errors.append("events.jsonl contains 0 event records")
         except Exception as e:
             errors.append(f"events.jsonl read error: {e}")
 
     # 5. Evidence report validation
     ev_rep_file = run_dir / "evidence_report.json"
-    if ev_rep_file.exists():
+    if not ev_rep_file.exists():
+        errors.append("evidence_report.json is missing")
+    else:
         try:
             ev_data = json.loads(ev_rep_file.read_text())
             if "stage_before" in ev_data and "stage_after" in ev_data:
                 report["evidence_report_valid"] = True
+            else:
+                errors.append("evidence_report.json missing stage_before or stage_after")
         except Exception as e:
             errors.append(f"evidence_report.json corrupt: {e}")
 
@@ -224,26 +266,40 @@ def validate_finalized_artifacts(run_dir: Path, policy: str, mode: str = "REAL")
     switches_dir = run_dir / "switches"
     traffic_dir = run_dir / "traffic"
 
-    if switches_dir.exists() and any(switches_dir.iterdir()):
+    if not switches_dir.exists() or not any(switches_dir.iterdir()):
+        errors.append("switches/ state directory is missing or empty")
+    else:
         report["switches_valid"] = True
 
-    if traffic_dir.exists() and any(traffic_dir.iterdir()):
+    if not traffic_dir.exists() or not any(traffic_dir.iterdir()):
+        errors.append("traffic/ directory is missing or empty")
+    else:
         report["traffic_valid"] = True
 
     # 7. Scenario parameters validation
     params_file = run_dir / "scenario_parameters.json"
-    if params_file.exists():
+    if not params_file.exists():
+        errors.append("scenario_parameters.json is missing")
+    else:
         try:
-            json.loads(params_file.read_text())
-            report["scenario_parameters_valid"] = True
+            pdata = json.loads(params_file.read_text())
+            if isinstance(pdata, dict) and "scenario" in pdata and "seed" in pdata:
+                report["scenario_parameters_valid"] = True
+            else:
+                errors.append("scenario_parameters.json missing required scenario/seed fields")
         except Exception as e:
             errors.append(f"scenario_parameters.json invalid: {e}")
 
+    # Strict Requirement of ALL claimed artifacts
     is_all_valid = (
         report["telemetry_valid"] and
         report["predictions_valid"] and
         report["routing_decisions_valid"] and
         report["events_valid"] and
+        report["evidence_report_valid"] and
+        report["switches_valid"] and
+        report["traffic_valid"] and
+        report["scenario_parameters_valid"] and
         len(errors) == 0
     )
     report["all_valid"] = is_all_valid
