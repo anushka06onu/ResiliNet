@@ -284,3 +284,100 @@ def test_scenario_results_dir_isolation(tmp_path):
     assert (run_dir / "evidence_report.json").exists()
     assert (run_dir / "switches").exists()
     assert not (tmp_path / "evidence_report.json").exists()
+
+
+def test_evaluate_campaign_strict_filtering_and_exclusion(tmp_path):
+    """Verify that evaluate_campaign strictly excludes mock fixtures to excluded_runs.csv."""
+    import json
+    import hashlib
+    from experiments.evaluate_campaign import evaluate_campaign
+
+    # 1. Create a mock run (should be excluded)
+    mock_dir = tmp_path / "mock_run_1"
+    mock_dir.mkdir()
+    mock_manifest = {
+        "experiment_id": "mock_run_1",
+        "scenario": "normal",
+        "effective_policy": "predictive",
+        "seed": 42,
+        "duration": 60,
+        "status": "completed",
+        "real_experiment": False,
+        "data_origin": "mock",
+        "evidence_complete": True
+    }
+    with open(mock_dir / "manifest.json", "w") as f:
+        json.dump(mock_manifest, f)
+    # Generate SHA256SUMS
+    h = hashlib.sha256(open(mock_dir / "manifest.json", "rb").read()).hexdigest()
+    with open(mock_dir / "SHA256SUMS", "w") as f:
+        f.write(f"{h}  manifest.json\n")
+
+    # 2. Create an eligible real run
+    real_dir = tmp_path / "real_run_1"
+    real_dir.mkdir()
+    real_manifest = {
+        "experiment_id": "real_run_1",
+        "scenario": "normal",
+        "effective_policy": "predictive",
+        "seed": 42,
+        "duration": 60,
+        "status": "completed",
+        "real_experiment": True,
+        "data_origin": "mininet",
+        "evidence_complete": True,
+        "policy_sync": {"required": True, "successful": True}
+    }
+    with open(real_dir / "manifest.json", "w") as f:
+        json.dump(real_manifest, f)
+    (real_dir / "traffic").mkdir()
+    (real_dir / "traffic" / "ping_after.txt").write_text("rtt min/avg/max/mdev = 0.020/0.040/0.060/0.010 ms\n")
+    (real_dir / "traffic" / "iperf_server.log").write_text("0.0-60.0 sec  14.3 MBytes  2.00 Mbits/sec  0.045 ms 0/10200 (0%)\n")
+
+    # SHA256SUMS for real run
+    with open(real_dir / "SHA256SUMS", "w") as f:
+        for fpath in [real_dir / "manifest.json", real_dir / "traffic" / "ping_after.txt", real_dir / "traffic" / "iperf_server.log"]:
+            sh = hashlib.sha256(open(fpath, "rb").read()).hexdigest()
+            f.write(f"{sh}  {fpath.relative_to(real_dir)}\n")
+
+    result = evaluate_campaign(tmp_path, allow_incomplete=True)
+    assert result["eligible_runs"] == 1
+    assert result["excluded_runs"] >= 1
+    assert (tmp_path / "excluded_runs.csv").exists()
+    assert (tmp_path / "aggregated_metrics.csv").exists()
+
+
+def test_invalid_experiment_id_and_path_traversal_rejection(tmp_path):
+    """Verify that invalid experiment IDs and path traversal attempts are rejected."""
+    import pytest
+    from experiments.run_experiment import run_experiment
+
+    # Injection attempt
+    with pytest.raises(ValueError, match="Invalid experiment ID"):
+        run_experiment("normal", 1, 42, experiment_id="../../evil_path", allow_mock=True, results_root=tmp_path)
+
+    with pytest.raises(ValueError, match="Invalid experiment ID"):
+        run_experiment("normal", 1, 42, experiment_id="run;rm -rf /", allow_mock=True, results_root=tmp_path)
+
+
+def test_apply_and_verify_netem_precise_matching(tmp_path):
+    """Verify apply_and_verify_netem parses and matches exact kernel qdisc output."""
+    from experiments.evidence_collector import apply_and_verify_netem
+
+    class MockNode:
+        def __init__(self, show_out):
+            self.show_out = show_out
+        def cmd(self, cmd_str):
+            if "show" in cmd_str:
+                return self.show_out
+            return ""
+
+    # Successful match
+    node_ok = MockNode("qdisc netem 1: dev s1-eth3 root refcnt 2 limit 1000 delay 25.0ms loss 5%")
+    assert apply_and_verify_netem(node_ok, "s1-eth3", 25.0, 5.0, tmp_path) is True
+
+    # Parameter mismatch should fail
+    import pytest
+    node_mismatch = MockNode("qdisc netem 1: dev s1-eth3 root refcnt 2 limit 1000 delay 10.0ms loss 1%")
+    with pytest.raises(RuntimeError, match="impairment verification failed"):
+        apply_and_verify_netem(node_mismatch, "s1-eth3", 25.0, 5.0, tmp_path)

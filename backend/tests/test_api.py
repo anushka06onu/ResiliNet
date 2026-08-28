@@ -110,21 +110,31 @@ def test_experiments_scenarios_endpoint():
 
 
 def test_internal_configure_and_finalize_endpoints(tmp_path):
-    # Test internal configure endpoint
-    res_cfg = client.post("/api/v1/internal/experiments/test_api_exp/configure", json={"policy": "reactive_threshold"})
+    headers = {"X-ResiliNet-Internal-Token": "resilinet-internal-secret-token"}
+
+    # Test unauthorized access rejection
+    res_unauth = client.post("/api/v1/internal/experiments/test_api_exp/configure", json={"policy": "reactive_threshold"})
+    assert res_unauth.status_code == 403
+
+    # Test authorized internal configure endpoint
+    res_cfg = client.post("/api/v1/internal/experiments/test_api_exp/configure", json={"policy": "reactive_threshold"}, headers=headers)
     assert res_cfg.status_code == 200
     data_cfg = res_cfg.json()
     assert data_cfg["effective_policy"] == "reactive"
     assert data_cfg["status"] == "CONFIGURED"
 
     # Test invalid policy rejection
-    res_invalid = client.post("/api/v1/internal/experiments/test_api_exp/configure", json={"policy": "invalid_policy_name"})
+    res_invalid = client.post("/api/v1/internal/experiments/test_api_exp/configure", json={"policy": "invalid_policy_name"}, headers=headers)
     assert res_invalid.status_code == 422
 
-    # Test internal finalize endpoint
-    res_fin = client.post("/api/v1/internal/experiments/test_api_exp/finalize")
+    # Test internal finalize endpoint with active experiment
+    res_fin = client.post("/api/v1/internal/experiments/test_api_exp/finalize", headers=headers)
     assert res_fin.status_code == 200
     assert res_fin.json()["status"] == "FINALIZED"
+
+    # Test context mismatch rejection on wrong ID
+    res_mismatch = client.post("/api/v1/internal/experiments/wrong_exp_id/finalize", headers=headers)
+    assert res_mismatch.status_code == 409
 
 
 def test_isolated_experiment_manifest_discovery_and_detail(tmp_path):

@@ -529,7 +529,8 @@ class ExperimentManager:
             "--duration", str(config.duration),
             "--seed", str(config.seed),
             "--experiment-id", id,
-            "--policy", config.policy
+            "--policy", config.policy,
+            "--require-sync"
         ]
         proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT))
         self.active_processes[id] = proc
@@ -699,12 +700,20 @@ class ExperimentConfigureRequest(BaseModel):
 telemetry_history = []
 prediction_history = []
 
+INTERNAL_API_TOKEN = os.environ.get("RESILINET_INTERNAL_TOKEN", "resilinet-internal-secret-token")
+
+from fastapi import Depends, Header
+
+def verify_internal_token(x_resilinet_internal_token: Optional[str] = Header(None)):
+    if x_resilinet_internal_token != INTERNAL_API_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid or missing internal token")
+
 import re
 
-@app.post("/api/v1/internal/experiments/{id}/configure")
+@app.post("/api/v1/internal/experiments/{id}/configure", dependencies=[Depends(verify_internal_token)])
 def internal_configure_experiment(id: str, req: ExperimentConfigureRequest):
     """Internal endpoint for runner to configure orchestrator context and verify policy."""
-    if not re.match(r"^[a-zA-Z0-9_-]+$", id):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", id):
         raise HTTPException(status_code=422, detail="Invalid experiment ID")
     orchestrator.begin_experiment(id, req.policy)
     return {
@@ -714,9 +723,14 @@ def internal_configure_experiment(id: str, req: ExperimentConfigureRequest):
         "status": "CONFIGURED"
     }
 
-@app.post("/api/v1/internal/experiments/{id}/finalize")
+@app.post("/api/v1/internal/experiments/{id}/finalize", dependencies=[Depends(verify_internal_token)])
 def internal_finalize_experiment(id: str):
     """Internal endpoint to export in-memory records into the isolated experiment directory."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", id):
+        raise HTTPException(status_code=422, detail="Invalid experiment ID")
+    if orchestrator.active_experiment_id != id:
+        raise HTTPException(status_code=409, detail=f"Experiment context mismatch: active={orchestrator.active_experiment_id}, requested={id}")
+
     run_dir = PROJECT_ROOT / "experiments" / "results" / id
     run_dir.mkdir(parents=True, exist_ok=True)
     import pandas as pd
@@ -732,8 +746,13 @@ def internal_finalize_experiment(id: str):
 
 @app.post("/api/v1/experiments/{id}/start")
 def start_experiment(id: str, config: ExperimentConfig = None):
-    if not re.match(r"^[a-zA-Z0-9_-]+$", id):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", id):
         raise HTTPException(status_code=422, detail="Invalid experiment ID")
+
+    # Enforce exactly one active experiment
+    active_running = [eid for eid, proc in experiment_manager.active_processes.items() if proc.poll() is None]
+    if active_running:
+        raise HTTPException(status_code=409, detail=f"Another experiment is currently running: {active_running[0]}")
 
     global telemetry_history, prediction_history
     telemetry_history = []

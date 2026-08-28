@@ -30,17 +30,33 @@ def log_experiment_event(results_dir, event_type: str, details: dict = None):
 
 def apply_and_verify_netem(node, interface: str, delay_ms: float, loss_pct: float, results_dir, event_name="congestion_injected_at", stage=1):
     """Applies traffic control impairment and verifies actual activation in the Linux kernel."""
+    import re
     cmd = f"tc qdisc change dev {interface} root netem delay {delay_ms}ms loss {loss_pct}%"
     out = node.cmd(cmd)
     show_out = node.cmd(f"tc qdisc show dev {interface}")
 
-    # Check if netem is present in the output
-    verified = ("netem" in show_out) and (out.strip() == "" or "error" not in out.lower())
+    observed_delay_ms = None
+    observed_loss_pct = None
+
+    match_delay = re.search(r"delay ([\d\.]+)ms", show_out)
+    if match_delay:
+        observed_delay_ms = float(match_delay.group(1))
+
+    match_loss = re.search(r"loss ([\d\.]+)%", show_out)
+    if match_loss:
+        observed_loss_pct = float(match_loss.group(1))
+
+    delay_matches = (observed_delay_ms is not None and abs(observed_delay_ms - delay_ms) < 0.5)
+    loss_matches = (observed_loss_pct is not None and abs(observed_loss_pct - loss_pct) < 0.5)
+    verified = ("netem" in show_out) and (out.strip() == "" or "error" not in out.lower()) and delay_matches and loss_matches
+
     details = {
         "command": cmd,
         "interface": interface,
-        "delay_ms": delay_ms,
-        "loss_percent": loss_pct,
+        "requested_delay_ms": delay_ms,
+        "observed_delay_ms": observed_delay_ms,
+        "requested_loss_pct": loss_pct,
+        "observed_loss_pct": observed_loss_pct,
         "cmd_output": out.strip(),
         "show_output": show_out.strip(),
         "verified": verified,
@@ -51,7 +67,7 @@ def apply_and_verify_netem(node, interface: str, delay_ms: float, loss_pct: floa
         return True
     else:
         log_experiment_event(results_dir, "congestion_injection_failed", details)
-        raise RuntimeError(f"tc qdisc impairment verification failed on {interface}: {out} | show: {show_out}")
+        raise RuntimeError(f"tc qdisc impairment verification failed on {interface}: req_delay={delay_ms}, obs_delay={observed_delay_ms}, req_loss={loss_pct}, obs_loss={observed_loss_pct} | output: {show_out}")
 
 
 def capture_switch_state(switches, results_dir, stage="before", experiment_id=None):

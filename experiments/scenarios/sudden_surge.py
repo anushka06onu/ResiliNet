@@ -59,11 +59,20 @@ def run_sudden_surge():
         time.sleep(duration // 2)
 
         info(f'*** Injecting sudden surge ({surge_bw}M from h2)...\n')
-        log_experiment_event(results_dir, "congestion_injected_at", {"surge_bw_mbps": surge_bw, "src": h2.IP(), "dst": h4.IP()})
         # Sudden surge: start massive traffic from h2 to h4
         h2.cmd(f'iperf -c {h4.IP()} -u -b {surge_bw}M -t {duration // 2} > {traffic_dir}/iperf_surge_client.log &')
+        time.sleep(1) # Allow process startup
 
-        time.sleep(duration - (duration // 2))
+        # Verify surge process is active on h2
+        check_ps = h2.cmd('ps aux | grep "iperf -c" | grep -v grep')
+        surge_active = (f"-b {surge_bw}M" in check_ps) or (len(check_ps.strip()) > 0)
+        if not surge_active:
+            log_experiment_event(results_dir, "congestion_injection_failed", {"surge_bw_mbps": surge_bw, "ps_output": check_ps})
+            raise RuntimeError(f"Sudden surge iperf process failed to start on h2: {check_ps}")
+
+        log_experiment_event(results_dir, "congestion_injected_at", {"surge_bw_mbps": surge_bw, "src": h2.IP(), "dst": h4.IP(), "verified": True})
+
+        time.sleep(max(1, duration - (duration // 2) - 1))
 
         # Post-surge ping
         ping_out_after = h1.cmd(f'ping -c 5 {h4.IP()}')

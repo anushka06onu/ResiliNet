@@ -48,8 +48,11 @@ EXIT_CODES = {
     "timed_out": 5,
     "completed_with_missing_evidence": 6,
     "policy_sync_failed": 7,
-    "cleanup_failed": 8
+    "cleanup_failed": 8,
+    "backend_finalization_failed": 9
 }
+
+import re
 
 
 def run_experiment(scenario, duration, seed, experiment_id=None, policy="predictive", allow_mock=False, results_root=None, overwrite=False, require_sync=False):
@@ -59,12 +62,21 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
     if not experiment_id:
         experiment_id = f"{scenario}_{effective_policy}_seed{seed}"
 
+    # Strict experiment ID validation to avoid any path injection or directory collisions
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", experiment_id):
+        raise ValueError(f"Invalid experiment ID: '{experiment_id}'. Must match [A-Za-z0-9_-]+")
+
     print(f"Starting Mininet experiment: {experiment_id} (Requested Policy: {policy}, Canonical: {effective_policy}, Scientific: {scientific_policy})")
 
     # Resolve absolute paths based on this script's location
     project_root = Path(__file__).resolve().parents[1]
     base_results = Path(results_root) if results_root else project_root / "experiments" / "results"
-    results_dir = base_results / experiment_id
+    results_dir = (base_results / experiment_id).resolve()
+    base_resolved = base_results.resolve()
+
+    # Ensure path containment within base results directory
+    if not (results_dir == base_resolved or base_resolved in results_dir.parents):
+        raise ValueError(f"Target directory {results_dir} resolves outside base results directory {base_results}")
 
     if results_dir.exists() and mode_check_is_active(results_dir):
         if not overwrite:
@@ -80,13 +92,24 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
     has_ryu = shutil.which("ryu-manager") is not None
     mode = "REAL"
 
+    # For live Mininet execution, synchronization with orchestrator is mandatory by default
+    effective_require_sync = require_sync or (has_ryu and not allow_mock)
+    internal_token = os.environ.get("RESILINET_INTERNAL_TOKEN", "resilinet-internal-secret-token")
+
     policy_sync_info = {
-        "required": require_sync,
+        "required": effective_require_sync,
         "attempted": False,
         "successful": False,
         "requested_policy": policy,
         "effective_policy": effective_policy,
         "scientific_policy": scientific_policy
+    }
+
+    finalization_info = {
+        "required": effective_require_sync,
+        "attempted": False,
+        "successful": False,
+        "artifacts": ["telemetry.csv", "predictions.csv", "routing_decisions.jsonl"]
     }
 
     if not has_ryu:
@@ -140,7 +163,10 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
             req = urllib.request.Request(
                 f"http://localhost:8000/api/v1/internal/experiments/{experiment_id}/configure",
                 data=req_data,
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "X-ResiliNet-Internal-Token": internal_token
+                }
             )
             policy_sync_info["attempted"] = True
             with urllib.request.urlopen(req, timeout=2) as resp:
@@ -150,7 +176,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
                         policy_sync_info["successful"] = True
                         print(f"Synchronized with Orchestrator: effective policy = {effective_policy}")
         except Exception as e:
-            if require_sync:
+            if effective_require_sync:
                 print(f"Error: Required policy synchronization failed: {e}")
                 status = "policy_sync_failed"
 
@@ -228,18 +254,32 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
 
     # If backend was synchronized and run succeeded, request backend record finalization into isolated directory
     if policy_sync_info.get("successful") and status in {"completed", "fixture_generated"}:
+        finalization_info["attempted"] = True
         try:
             import urllib.request
             fin_req = urllib.request.Request(
                 f"http://localhost:8000/api/v1/internal/experiments/{experiment_id}/finalize",
                 data=b"{}",
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "X-ResiliNet-Internal-Token": internal_token
+                }
             )
             with urllib.request.urlopen(fin_req, timeout=2) as resp:
                 if resp.status == 200:
+                    finalization_info["successful"] = True
                     print("Backend telemetry and decision records finalized to run directory.")
         except Exception as e:
-            print(f"Notice: Finalization callback omitted: {e}")
+            print(f"Notice: Finalization callback error: {e}")
+            finalization_info["successful"] = False
+
+        # Validate that required finalization artifacts are present
+        has_tel = (results_dir / "telemetry.csv").exists()
+        has_pred = (results_dir / "predictions.csv").exists()
+        has_dec = (results_dir / "routing_decisions.jsonl").exists()
+        if not (has_tel and has_pred and has_dec):
+            if status == "completed":
+                status = "backend_finalization_failed"
 
     # Check evidence report if present
     ev_report_path = results_dir / "evidence_report.json"
@@ -259,7 +299,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
     end_time = datetime.now(timezone.utc).isoformat()
 
     # Save manifest
-    executed_in_mininet = (mode == "REAL" and status not in {"environment_unavailable", "controller_failed", "scenario_failed", "policy_sync_failed"})
+    executed_in_mininet = (mode == "REAL" and status not in {"environment_unavailable", "controller_failed", "scenario_failed", "policy_sync_failed", "backend_finalization_failed"})
     manifest = {
         "experiment_id": experiment_id,
         "scenario": scenario,
@@ -270,6 +310,7 @@ def run_experiment(scenario, duration, seed, experiment_id=None, policy="predict
         "scientific_policy": scientific_policy,
         "policy_implementation": f"PredictiveRouter:{effective_policy}",
         "policy_sync": policy_sync_info,
+        "backend_finalization": finalization_info,
         "status": status,
         "mode": mode,
         "real_experiment": executed_in_mininet,
