@@ -110,11 +110,8 @@ const NetworkOverview = () => {
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col">
           <h3 className="text-slate-300 font-medium mb-4">
-            Illustrative Alert Lifecycle (Demo)
+            Illustrative Alert Lifecycle (Static Demo Only)
           </h3>
-          <p className="text-xs text-slate-400 mb-3">
-            Static walkthrough; the events below are not live network observations.
-          </p>
           <div className="flex-1 overflow-y-auto space-y-2 relative pl-4 border-l-2 border-slate-700 ml-2">
             <div className="relative">
               <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-amber-500 border-2 border-slate-900"></div>
