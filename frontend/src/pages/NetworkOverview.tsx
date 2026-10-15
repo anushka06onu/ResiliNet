@@ -110,7 +110,7 @@ const NetworkOverview = () => {
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex flex-col">
           <h3 className="text-slate-300 font-medium mb-4">
-            Alert Lifecycle (Flow 1: Telemedicine)
+            Illustrative Alert Lifecycle (Static Demo Only)
           </h3>
           <div className="flex-1 overflow-y-auto space-y-2 relative pl-4 border-l-2 border-slate-700 ml-2">
             <div className="relative">
